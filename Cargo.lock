@@ -512,13 +512,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eos"
-version = "0.1.0"
-dependencies = [
- "extism",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1134,6 +1127,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2d80299ef12ff69b16a84bb182e3b9df68b5a91574d3d4fa6e41b65deec4df1"
 dependencies = [
  "adler2",
+]
+
+[[package]]
+name = "nest"
+version = "0.1.0"
+dependencies = [
+ "extism",
 ]
 
 [[package]]

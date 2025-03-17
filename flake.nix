@@ -1,5 +1,5 @@
 {
-  description = "Eos devShell";
+  description = "NEST flake";
 
   inputs = {
     nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,15 +17,11 @@
       in
       {
         devShells.default = with pkgs; mkShell {
+          name = "NEST devShell";
           buildInputs = [
-            eza
             extism-cli
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
           ];
-
-          shellHook = ''
-            alias ls=eza
-          '';
         };
       }
     );

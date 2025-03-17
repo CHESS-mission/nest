@@ -1,12 +1,12 @@
-# EST Operational Simulator
+# NEST
 
-The EST Operational Simulator (Eos) is a modular integration testing framework
-intended for flight software verification written in Rust using
-[Extism](https://extism.org/).
+NEST (Numerical Environment for Software Testing) is a modular integration
+testing framework intended for flight software verification written in Rust
+using [Extism](https://extism.org/).
 
 ## Build
 
-The `eos` binary can be built using Cargo:
+The `nest` binary can be built using Cargo:
 
 ```bash
 cargo build --release

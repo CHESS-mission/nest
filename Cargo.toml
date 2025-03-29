@@ -5,3 +5,13 @@ edition = "2021"
 
 [dependencies]
 extism = "1.8.0"
+extism-convert = "1.10.0"
+serde = "1.0.219"
+log = "0.4"
+thiserror = "2.0"
+vhost = { version = "0.13", features = ["vhost-user-backend"] }
+vhost-user-backend = "0.17"
+virtio-bindings = "0.2.5"
+virtio-queue = "0.14"
+vm-memory = "0.16.1"
+vmm-sys-util = "0.12"

@@ -19,9 +19,11 @@
         devShells.default = with pkgs; mkShell {
           name = "NEST devShell";
           buildInputs = [
+            llvmPackages.clang
             extism-cli
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
           ];
+          LIBCLANG_PATH = "${pkgs.llvmPackages_16.libclang.lib}/lib";
         };
       }
     );

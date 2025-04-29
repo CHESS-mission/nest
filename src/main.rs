@@ -160,7 +160,7 @@
 
 use std::thread;
 
-use nest::component::{test::{TestComponent, TestComponentConfig}, Component, GenericSender, IntMessage};
+use nest::component::{test::{TestComponent, TestComponentConfig}, Component, GenericSender, IntMessage, wasm::WasmComponent, TextMessage};
 
 fn main() {
     // Instantiate components
@@ -170,12 +170,33 @@ fn main() {
     let config2 = TestComponentConfig { initial_sum: -100, greeting: "Hello!".into() };
     let mut test2 = TestComponent::new(config2);
 
+    // Instantiate WasmComponent
+    let wasm_url = "https://github.com/extism/plugins/releases/latest/download/count_vowels.wasm";
+    let mut wasm_component = WasmComponent::new("WasmComp", wasm_url).unwrap();
+
+
     // Connect ports
     let print1 = test1.system_port_hub_mut().port_by_name_mut("print").unwrap();
     let print2 = test2.system_port_hub_mut().port_by_name_mut("print").unwrap();
 
     print1.connect_endpoint(&print2.get_endpoint()).unwrap();
     print2.connect_endpoint(&print1.get_endpoint()).unwrap();
+
+
+    // I can't just do that because of borrowing, how should I deal with that when connecting input and output ports? !!!
+    let wasm_input = wasm_component.system_port_hub_mut().port_by_name_mut("input").unwrap().get_endpoint();
+    let wasm_output = wasm_component.system_port_hub_mut().port_by_name_mut("output").unwrap().get_endpoint();
+
+    // Have to split scope of borrowings
+    // let wasm_input = {
+    //     let hub = wasm_component.system_port_hub_mut();
+    //     hub.port_by_name_mut("input").unwrap().get_endpoint()
+    // };    
+    // {
+    //     let hub = wasm_component.system_port_hub_mut();
+    //     let output = hub.port_by_name_mut("output").unwrap();
+    //     output.connect_endpoint(&print1.get_endpoint()).unwrap(); // connect output port of wasm_component to print port of test1
+    // }
 
     // Manually send messages
     let cumsum1 = test1.system_port_hub().port_by_name("cumsum").unwrap();
@@ -192,6 +213,10 @@ fn main() {
         tx.send(IntMessage::new(-38)).unwrap();
     }
 
+    if let GenericSender::Text(tx) = wasm_input { // already an endpoint
+        tx.send(TextMessage::new("Hello Hola")).unwrap();
+    }
+
     // Start components
     let handle1 = thread::spawn(move || {
         test1.run().unwrap();
@@ -201,6 +226,12 @@ fn main() {
         test2.run().unwrap();
     });
 
+    let wasm_handle = thread::spawn(move || {
+        wasm_component.run().unwrap();
+    });
+    
+
     handle1.join().unwrap();
     handle2.join().unwrap();
+    wasm_handle.join().unwrap()
 }

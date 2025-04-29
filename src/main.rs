@@ -158,9 +158,8 @@
 //     }
 // }
 
-use std::thread;
-
-use nest::component::{test::{TestComponent, TestComponentConfig}, Component, GenericSender, IntMessage, wasm::WasmComponent, TextMessage};
+use std::{thread::sleep, time::Duration};
+use nest::component::{test::{TestComponent, TestComponentConfig}, Component, ConnectablePort, HasPortType, IntMessage, TextMessage};
 
 fn main() {
     // Instantiate components
@@ -176,11 +175,17 @@ fn main() {
 
 
     // Connect ports
-    let print1 = test1.system_port_hub_mut().port_by_name_mut("print").unwrap();
-    let print2 = test2.system_port_hub_mut().port_by_name_mut("print").unwrap();
+    let print1: &mut dyn ConnectablePort<TextMessage> = test1.port_by_name_mut("print").unwrap();
+    let print2: &mut dyn ConnectablePort<TextMessage> = test2.port_by_name_mut("print").unwrap();
 
-    print1.connect_endpoint(&print2.get_endpoint()).unwrap();
-    print2.connect_endpoint(&print1.get_endpoint()).unwrap();
+    print1.connect_to(print2);
+    print2.connect_to(print1);
+
+    let cumsum1 = test1.port_by_name_mut("cumsum").unwrap();
+    let cumsum2 = test2.port_by_name_mut("cumsum").unwrap();
+
+    cumsum1.connect_to(cumsum2);
+    cumsum2.connect_to(cumsum1);
 
 
     // I can't just do that because of borrowing, how should I deal with that when connecting input and output ports? !!!
@@ -199,39 +204,23 @@ fn main() {
     // }
 
     // Manually send messages
-    let cumsum1 = test1.system_port_hub().port_by_name("cumsum").unwrap();
-    let cumsum2 = test2.system_port_hub().port_by_name("cumsum").unwrap();
+    cumsum1.send(&IntMessage::new(10)).unwrap();
+    cumsum1.send(&IntMessage::new(-38)).unwrap();
 
-    if let GenericSender::Int(tx) = cumsum1.get_endpoint() {
-        tx.send(IntMessage::new(8)).unwrap();
-        tx.send(IntMessage::new(150)).unwrap();
-        tx.send(IntMessage::new(56)).unwrap();
-    }
-
-    if let GenericSender::Int(tx) = cumsum2.get_endpoint() {
-        tx.send(IntMessage::new(10)).unwrap();
-        tx.send(IntMessage::new(-38)).unwrap();
-    }
+    cumsum2.send(&IntMessage::new(8)).unwrap();
+    cumsum2.send(&IntMessage::new(150)).unwrap();
+    cumsum2.send(&IntMessage::new(56)).unwrap();
 
     if let GenericSender::Text(tx) = wasm_input { // already an endpoint
         tx.send(TextMessage::new("Hello Hola")).unwrap();
     }
 
     // Start components
-    let handle1 = thread::spawn(move || {
-        test1.run().unwrap();
-    });
+    let monitor1 = test1.start().unwrap();
+    let monitor2 = test2.start().unwrap();
 
-    let handle2 = thread::spawn(move || {
-        test2.run().unwrap();
-    });
+    sleep(Duration::from_millis(100));
 
-    let wasm_handle = thread::spawn(move || {
-        wasm_component.run().unwrap();
-    });
-    
-
-    handle1.join().unwrap();
-    handle2.join().unwrap();
-    wasm_handle.join().unwrap()
+    monitor1.stop().unwrap();
+    monitor2.stop().unwrap();
 }

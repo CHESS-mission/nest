@@ -1,86 +1,179 @@
 use anyhow::Result;
 use extism::{Manifest, Plugin, Wasm};
-use std::sync::{Arc, Mutex}; 
-
-use super::{
-    Component, DynamicSystemPortHub, PortQueueCapacity, SystemPort, SystemPortHub,
-    TextMessage, GenericSender
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    thread,
 };
+
+use crossbeam_channel::{unbounded, Receiver, Select};
+
+use super::{BoolMessage, BytesMessage, Component, ComponentMonitor, ConnectablePort, FloatMessage, HasPortType, IntMessage, JsonMessage, ManagedSystemPort, MonitorCommand, PortQueueCapacity, SystemPort, TextMessage};
+
+// Config
+
+// State
+struct WasmComponentState;
+
+
+enum GenericSystemPort {
+    Int(SystemPort<WasmComponent, WasmComponentState, IntMessage>),
+    Float(SystemPort<WasmComponent, WasmComponentState, FloatMessage>),
+    Bool(SystemPort<WasmComponent, WasmComponentState, BoolMessage>),
+    Bytes(SystemPort<WasmComponent, WasmComponentState, BytesMessage>),
+    Text(SystemPort<WasmComponent, WasmComponentState, TextMessage>),
+    Json(SystemPort<WasmComponent, WasmComponentState, JsonMessage>),
+}
+
+// Component
 
 pub struct WasmComponent {
     name: String,
-    plugin: Arc<Mutex<Plugin>>, // shared plugin instance for multi thread safety !!!
-	// mettre dans state a la place 
-    system_ports_hub: DynamicSystemPortHub<()>,
+    plugin: Arc<Mutex<Plugin>>,
+    ports: HashMap<String, GenericSystemPort>,
 }
 
 impl WasmComponent {
-    pub fn new(name: &str, wasm_url: &str) -> Result<Self> {
+    // Creates a new WASM component from a URL
+    pub fn new(name: &str, wasm_url: &str) -> Self {
+        // Load the WASM module
         let url = Wasm::url(wasm_url);
         let manifest = Manifest::new([url]);
+        let plugin = Arc::new(Mutex::new(Plugin::new(&manifest, [], true).unwrap()));
 
-        let plugin = Arc::new(Mutex::new(Plugin::new(&manifest, [], true)?));
+        // Input port: sends data to the plugin and forwards the result to the output port
+        let plugin_in = Arc::clone(&plugin);
+        let name_in = name.to_string();
+        let input_port: SystemPort<WasmComponent, WasmComponentState, TextMessage> =
+            SystemPort::new(
+                Box::new(move |hub, _state, msg| {
+                    // Call the plugin
+                    let mut plugin = plugin_in.lock().unwrap();
+                    let res = plugin.call::<&str, &str>("count_vowels", &msg.data)?;
+                    println!("{} [wasm] plugin returned: {}", name_in, res);
 
-        let name_string = name.to_string();
-
-        let mut hub = DynamicSystemPortHub::new();
-
-        let plugin_input = Arc::clone(&plugin);
-        let name_input = name_string.clone();
-
-        // port that receives input text, runs the WASM plugin, and forwards result to output
-        let input_port: SystemPort<DynamicSystemPortHub<()>, (), TextMessage> = SystemPort::new(
-            Box::new(move |hub, _state, msg| {
-                let mut plugin = plugin_input.lock().unwrap();
-                let res = plugin.call::<&str, &str>("count_vowels", &msg.data)?;
-                println!("{} [wasm] plugin returned: {}", name_input, res);
-
-                let out_msg = TextMessage::new(&res.to_string()); // wrap plugin output as a TextMessage
-
-                // try sending plugin result to the output port if it's connected
-                if let Some(output) = hub.port_by_name("output") {
-                    if let GenericSender::Text(sender) = output.get_endpoint() {
-                        sender.send(out_msg)?;
+                    // Forward the response to output port if connected
+                    if let Some(out) = hub.port_by_name("output") {
+                        out.send(&TextMessage::new(res))?;
                     }
+                    Ok(())
+                }),
+                PortQueueCapacity::Unbounded,
+            );
+
+        // Output port: prints received data
+        let name_out = name.to_string();
+        let output_port: SystemPort<WasmComponent, WasmComponentState, TextMessage> =
+            SystemPort::new(
+                Box::new(move |_hub, _state, msg| {
+                    println!("{} [wasm] OUTPUT: {}", name_out, msg.data);
+                    Ok(())
+                }),
+                PortQueueCapacity::Unbounded,
+            );
+
+        let mut ports = HashMap::new();
+        ports.insert("input".into(), GenericSystemPort::Text(input_port));
+        ports.insert("output".into(), GenericSystemPort::Text(output_port));
+
+        Self { name: name.to_string(), plugin, ports }
+    }
+
+
+    fn loop_recv_dispatch(&self, state: &mut WasmComponentState, observable_state: &Arc<Mutex<String>>, monitor_rx: &Receiver<MonitorCommand>) -> Result<()> {
+        let mut sel = Select::new();
+
+        // Register monitor rx at index 0
+        sel.recv(monitor_rx);
+
+        // Register all ports
+        let ports: Vec<_> = self.ports.values().collect();
+        for port in &ports {
+            Self::generic_to_managed(port).register(&mut sel);
+        }
+
+        let mut update_observable_state = false;
+
+        loop {
+            // Wait until a receive operation becomes ready and try executing it.
+            let index = sel.ready();
+
+            if index == 0 {
+                // Handle monitor command
+                match monitor_rx.recv()? {
+                    MonitorCommand::Stop => return Ok(()),
+                    MonitorCommand::StartObservableStateUpdates => update_observable_state = true,
+                    MonitorCommand::StopObservableStateUpdates => update_observable_state = false,
                 }
+            } else {
+                // Dispatch to port
+                Self::generic_to_managed(&ports[index - 1]).recv(self, state)?;
+            }
 
-                Ok(())
-            }),
-            PortQueueCapacity::Unbounded,
-        );
+            if update_observable_state {
+                *observable_state.lock().unwrap() = "running".into();
+            }
+        }
+    }
 
-        let name_output = name_string.clone();
-
-        // optional output port, just prints the message if received
-        let output_port: SystemPort<DynamicSystemPortHub<()>, (), TextMessage> = SystemPort::new(
-            Box::new(move |_hub, _state, msg| {
-                println!("{} [wasm] output: {}", name_output, msg.data);
-                Ok(())
-            }),
-            PortQueueCapacity::Unbounded,
-        );
-
-        hub.add_port("input", Box::new(input_port));
-        hub.add_port("output", Box::new(output_port));
-
-        Ok(Self {
-            name: name_string,
-            plugin,
-            system_ports_hub: hub,
-        })
+    fn generic_to_managed(gen_port: &GenericSystemPort) -> &(dyn ManagedSystemPort<Self, WasmComponentState>) {
+        match gen_port {
+            GenericSystemPort::Int(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
+            GenericSystemPort::Float(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
+            GenericSystemPort::Bool(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
+            GenericSystemPort::Bytes(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
+            GenericSystemPort::Text(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
+            GenericSystemPort::Json(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
+        }
     }
 }
 
-impl Component<()> for WasmComponent {
-    fn system_port_hub(&self) -> &dyn SystemPortHub {
-        &self.system_ports_hub
-    }
 
-    fn system_port_hub_mut(&mut self) -> &mut dyn SystemPortHub {
-        &mut self.system_ports_hub
+impl Component for WasmComponent {
+    fn start(self) -> Result<ComponentMonitor> {
+        let (tx, rx) = unbounded();
+        let observable_state = Arc::new(Mutex::new(String::new()));
+        let observable_state_clone = observable_state.clone();
+        let handle = thread::spawn(move || {
+            let mut state = WasmComponentState { };
+            self.loop_recv_dispatch(&mut state, &observable_state, &rx)
+        });
+        Ok(ComponentMonitor::new(handle, tx, observable_state_clone))
     }
+}
 
-    fn run(&mut self) -> Result<()> {
-        self.system_ports_hub.loop_recv_dispatch(&mut ())
-    }
+macro_rules! impl_has_port_type {
+    ( $enum_type:ident : $( $variant:ident => $msg_type:ty ),* $(,)? ) => {
+        $(
+            impl HasPortType<$msg_type> for WasmComponent {
+                fn port_by_name(&self, name: &str) -> Option<&dyn ConnectablePort<$msg_type>> {
+                    self.ports.get(name).and_then(|v|
+                        match v {
+                            $enum_type::$variant(port) => Some(port as &dyn ConnectablePort<$msg_type>),
+                            _ => None
+                        }
+                    )
+                }
+
+                fn port_by_name_mut(&mut self, name: &str) -> Option<&mut dyn ConnectablePort<$msg_type>> {
+                    self.ports.get_mut(name).and_then(|v|
+                        match v {
+                            $enum_type::$variant(port) => Some(port as &mut dyn ConnectablePort<$msg_type>),
+                            _ => None
+                        }
+                    )
+                }
+            }
+        )*
+    };
+}
+
+impl_has_port_type! {
+    GenericSystemPort:
+        Int => IntMessage,
+        Float => FloatMessage,
+        Bool => BoolMessage,
+        Bytes => BytesMessage,
+        Text => TextMessage,
+        Json => JsonMessage,
 }

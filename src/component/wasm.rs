@@ -1,5 +1,5 @@
 use anyhow::Result;
-use extism::{Manifest, Plugin, Wasm};
+use extism::{Manifest, Plugin, Wasm, PluginBuilder, CurrentPlugin, UserData, Val, PTR};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -11,9 +11,19 @@ use crossbeam_channel::{unbounded, Receiver, Select};
 use super::{BoolMessage, BytesMessage, Component, ComponentMonitor, ConnectablePort, FloatMessage, HasPortType, IntMessage, JsonMessage, ManagedSystemPort, MonitorCommand, PortQueueCapacity, SystemPort, TextMessage};
 
 // Config
+
+pub type HostCallback = fn(&mut CurrentPlugin, &[Val], &mut [Val], UserData<()>) -> Result<(), extism::Error>; // type returned by hostfn! macro
+
+pub struct HostFunction { // wrap host callback with import name expected by WASM module
+    pub name: &'static str, //required because host_fn! does not embed WASM module name
+    pub callback: HostCallback,
+}
+
 pub struct WasmComponentConfig {
     pub name: String,
     pub wasm_url: String,
+    pub export_func: String, // function to call inside the WASM module
+    pub host_functions: Vec<HostFunction> // host functions defined outside the WASM module, imported into the module
 }
 
 // State
@@ -41,19 +51,39 @@ impl WasmComponent {
     pub fn new(config: WasmComponentConfig) -> Self {
         // Load the WASM module
         let name = config.name.clone();
-        let url = Wasm::url(&config.wasm_url);
+        let export_fn = config.export_func.clone();
+        let url = if config.wasm_url.starts_with("http://") || config.wasm_url.starts_with("https://") {
+            Wasm::url(&config.wasm_url)
+        } else {
+            Wasm::file(&config.wasm_url)
+        };
         let manifest = Manifest::new([url]);
-        let plugin = Arc::new(Mutex::new(Plugin::new(&manifest, [], true).unwrap()));
+
+        let mut builder = PluginBuilder::new(manifest).with_wasi(true);
+
+        // Add host functions to the plugin
+        for hf in &config.host_functions {
+            builder = builder.with_function_in_namespace(
+                "env",
+                hf.name,
+                [PTR],
+                [PTR],
+                UserData::new(()),
+                hf.callback,
+            );
+        }
+
+        let plugin = Arc::new(Mutex::new(builder.build().unwrap()));
 
         // Input port: sends data to the plugin and forwards the result to the output port
-        let plugin_in = Arc::clone(&plugin);
+        let plugin_in: Arc<Mutex<Plugin>> = Arc::clone(&plugin);
         let name_in = name.to_string();
         let input_port: SystemPort<WasmComponent, WasmComponentState, TextMessage> =
             SystemPort::new(
                 Box::new(move |hub, _state, msg| {
                     // Call the plugin
                     let mut plugin = plugin_in.lock().unwrap();
-                    let res = plugin.call::<&str, &str>("count_vowels", &msg.data)?;
+                    let res = plugin.call::<&str, &str>(&export_fn, &msg.data)?;
                     println!("{} [wasm] plugin returned: {}", name_in, res);
 
                     // Forward the response to output port if connected

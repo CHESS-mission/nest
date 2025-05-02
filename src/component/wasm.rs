@@ -11,6 +11,10 @@ use crossbeam_channel::{unbounded, Receiver, Select};
 use super::{BoolMessage, BytesMessage, Component, ComponentMonitor, ConnectablePort, FloatMessage, HasPortType, IntMessage, JsonMessage, ManagedSystemPort, MonitorCommand, PortQueueCapacity, SystemPort, TextMessage};
 
 // Config
+pub struct WasmComponentConfig {
+    pub name: String,
+    pub wasm_url: String,
+}
 
 // State
 struct WasmComponentState;
@@ -28,16 +32,16 @@ enum GenericSystemPort {
 // Component
 
 pub struct WasmComponent {
-    name: String,
     plugin: Arc<Mutex<Plugin>>,
     ports: HashMap<String, GenericSystemPort>,
 }
 
 impl WasmComponent {
     // Creates a new WASM component from a URL
-    pub fn new(name: &str, wasm_url: &str) -> Self {
+    pub fn new(config: WasmComponentConfig) -> Self {
         // Load the WASM module
-        let url = Wasm::url(wasm_url);
+        let name = config.name.clone();
+        let url = Wasm::url(&config.wasm_url);
         let manifest = Manifest::new([url]);
         let plugin = Arc::new(Mutex::new(Plugin::new(&manifest, [], true).unwrap()));
 
@@ -76,7 +80,7 @@ impl WasmComponent {
         ports.insert("input".into(), GenericSystemPort::Text(input_port));
         ports.insert("output".into(), GenericSystemPort::Text(output_port));
 
-        Self { name: name.to_string(), plugin, ports }
+        Self { plugin, ports }
     }
 
 

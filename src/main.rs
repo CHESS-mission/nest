@@ -1,6 +1,6 @@
 use std::{thread::sleep, time::Duration};
 use nest::component::{
-    test::{TestComponent, TestComponentConfig},wasm::WasmComponent, Component, ConnectablePort, HasPortType, IntMessage, TextMessage,
+    test::{TestComponent, TestComponentConfig}, wasm::{WasmComponent, WasmComponentConfig}, Component, ConnectablePort, HasPortType, IntMessage, TextMessage,
 };
 
 fn main() {
@@ -33,8 +33,8 @@ fn main() {
     cumsum2.send(&IntMessage::new(56)).unwrap();
 
     // WasmComponent test
-    let wasm_url = "https://github.com/extism/plugins/releases/latest/download/count_vowels.wasm"; // ADD CONFIG !!!
-    let mut wasm_component = WasmComponent::new("WasmComp", wasm_url); 
+    let config_wasm = WasmComponentConfig { name: "WasmComp".into(), wasm_url: "https://github.com/extism/plugins/releases/latest/download/count_vowels.wasm".into() }; 
+    let mut wasm_component = WasmComponent::new(config_wasm); 
 
     // Printer component to display the plugin's output
     let printer_cfg = TestComponentConfig { initial_sum: 0, greeting: "Printer".into() };

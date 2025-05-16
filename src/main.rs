@@ -1,15 +1,11 @@
-use extism::host_fn;
 use std::{thread::sleep, time::Duration};
 use nest::component::{
     test::{TestComponent, TestComponentConfig}, wasm::{WasmComponent, WasmComponentConfig}, Component, ConnectablePort, HasPortType, IntMessage, TextMessage,
 };
-use nest::component::wasm::HostFunction;
+use nest::component::wasm::{InputPort, OutputPort, MessageType::Text};
 
-// Host function called from the WASM module
-host_fn!(pong(input: String) -> String {
-    println!("pong (host) received: {}", input);
-    Ok(format!("{}!", input))
-});
+
+
 
 fn main() {
     // Instantiate components
@@ -41,33 +37,37 @@ fn main() {
     cumsum2.send(&IntMessage::new(56)).unwrap();
 
     // WasmComponent test
-    let config_wasm = WasmComponentConfig { name: "WasmComp".into(), wasm_url: "https://github.com/extism/plugins/releases/latest/download/count_vowels.wasm".into(), host_functions: vec![], export_func: "count_vowels".into() }; 
+    let config_wasm = WasmComponentConfig {
+        name: "WasmComp".into(),
+        wasm_url: "https://github.com/extism/plugins/releases/latest/download/count_vowels.wasm".into(),
+        input_ports: vec![ InputPort { name: "count_vowels".into(), msg_type: Text } ],
+        output_ports: vec![],
+    };    
     let mut wasm_component = WasmComponent::new(config_wasm); 
 
     // Ping Pong WasmComponent
-    let pong_host = HostFunction {
-        name: "pong",
-        callback: pong,
-    };
-    let config_pingpong = WasmComponentConfig { name: "WasmPingPong".into(), wasm_url: "component_artifacts/ping_pong_c.wasm".into(), host_functions: vec![pong_host], export_func: "ping".into() }; 
+    let config_pingpong = WasmComponentConfig {
+        name: "PingPong".into(),
+        wasm_url: "component_artifacts/ping_pong_c.wasm".into(),
+        input_ports: vec![ InputPort { name: "ping".into(), msg_type: Text } ],
+        output_ports: vec![ OutputPort { name: "pong".into(), msg_type: Text } ],
+    };    
     let mut pingpong_component = WasmComponent::new(config_pingpong);
 
     // Printer component to display the plugin's output
     let printer_cfg = TestComponentConfig { initial_sum: 0, greeting: "Printer".into() };
     let mut printer = TestComponent::new(printer_cfg);
 
-    // Connect wasm.output --> printer.print
-    let wasm_out: &mut dyn ConnectablePort<TextMessage> = wasm_component.port_by_name_mut("output").unwrap();
     let printer_in: &mut dyn ConnectablePort<TextMessage> = printer.port_by_name_mut("print").unwrap();
-    wasm_out.connect_to(printer_in);
     
     // Connect pingpong.output --> printer.print
-    let pingpong_out: &mut dyn ConnectablePort<TextMessage> = pingpong_component.port_by_name_mut("output").unwrap();
-    pingpong_out.connect_to(printer_in);
+    let pong_out: &mut dyn ConnectablePort<TextMessage> =
+    pingpong_component.port_by_name_mut("pong").unwrap();
+    pong_out.connect_to(printer_in);
 
     // Capture sender before starting the component
-    let wasm_input = wasm_component.port_by_name_mut("input").unwrap().sender().clone();
-    let pingpong_input = pingpong_component.port_by_name_mut("input").unwrap().sender().clone();
+    let wasm_input = wasm_component.port_by_name("count_vowels").unwrap().sender().clone();
+    let pingpong_input = pingpong_component.port_by_name("ping").unwrap().sender().clone();
 
     // Start components
     let monitor1 = test1.start().unwrap();
@@ -80,7 +80,7 @@ fn main() {
     wasm_input.send(TextMessage::new("Hello Hola")).unwrap();
     pingpong_input.send(TextMessage::new("ping")).unwrap();
 
-    sleep(Duration::from_millis(100));
+    sleep(Duration::from_millis(300));
 
     monitor1.stop().unwrap();
     monitor2.stop().unwrap();

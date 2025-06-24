@@ -39,14 +39,59 @@ struct OutCtx {
     port_name: String,
 }
 
+// Convert MessageType NEST to ValType Extism
+fn message_type_to_valtype(msg_type: &MessageType) -> ValType {
+    match msg_type {
+        MessageType::Int => ValType::I64,
+        MessageType::Float => ValType::F64,
+        MessageType::Bool => ValType::I64,
+        MessageType::Bytes => ValType::I64,
+        MessageType::Text => ValType::I64,
+        MessageType::Json => ValType::I64,
+    }
+}
+
 fn common_out(
-    _plugin: &mut extism::CurrentPlugin,
+    plugin: &mut extism::CurrentPlugin,
     vals: &[extism::Val],
     rets: &mut [extism::Val],
     ctx: UserData<OutCtx>,
 ) -> Result<(), extism::Error> {
-    println!("[wasm] OUT {}: vals={:?}", ctx.get()?.lock().unwrap().port_name, vals);
-    rets[0] = vals[0].clone();
+    let name = ctx.get()?.lock().unwrap().port_name.clone();
+
+    if vals.is_empty() {
+        println!("[wasm] OUT {}: <no argument>", name);
+        return Ok(());
+    }
+
+    let offset = match vals[0] {
+        extism::Val::I64(n) => n as u64,
+        _ => {
+            println!("[wasm] OUT {}: <unexpected argument type>", name);
+            return Ok(());
+        }
+    };
+
+    if let Some(handle) = plugin.memory_handle(offset) {
+        // Try reading as a string
+        match plugin.memory_str(handle) {
+            Ok(s) => println!("[wasm] OUT {}: \"{}\"", name, s),
+            Err(_) => {
+                // Fallback: try as bytes
+                match plugin.memory_bytes(handle) {
+                    Ok(bytes) => println!("[wasm] OUT {}: {:?}", name, bytes),
+                    Err(e) => println!("[wasm] OUT {}: <failed to read memory: {}>", name, e),
+                }
+            }
+        }
+    } else {
+        println!("[wasm] OUT {}: <invalid offset {}>", name, offset);
+    }
+
+    // Set return value to 0 to indicate success
+    if !rets.is_empty() {
+        rets[0] = extism::Val::I64(0);
+    }
     Ok(())
 }
 
@@ -93,11 +138,12 @@ impl WasmComponent {
 
         // Register one host‑function per out port, all use same callback
         for op in &config.output_ports {
+            let valtype = message_type_to_valtype(&op.msg_type);
             builder = builder.with_function_in_namespace(
                 "env",
                 &op.name,
-                [ValType::I64],
-                [ValType::I64],
+                [valtype.clone()],
+                [valtype],
                 UserData::new(OutCtx { port_name: op.name.clone() }),
                 common_out,
             );

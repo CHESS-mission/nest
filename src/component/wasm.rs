@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex},
     thread,
 };
+use extism::ValType;
 
 use crossbeam_channel::{unbounded, Receiver, Select};
 
@@ -38,11 +39,16 @@ struct OutCtx {
     port_name: String,
 }
 
-host_fn!(common_out(ctx: OutCtx; data: String) -> String {
-    let name = ctx.get()?.lock().unwrap().port_name.clone();
-    println!("[wasm] OUT {}: {}", name, data);
-    Ok(data)
-});
+fn common_out(
+    _plugin: &mut extism::CurrentPlugin,
+    vals: &[extism::Val],
+    rets: &mut [extism::Val],
+    ctx: UserData<OutCtx>,
+) -> Result<(), extism::Error> {
+    println!("[wasm] OUT {}: vals={:?}", ctx.get()?.lock().unwrap().port_name, vals);
+    rets[0] = vals[0].clone();
+    Ok(())
+}
 
 // Config
 
@@ -89,15 +95,15 @@ impl WasmComponent {
         for op in &config.output_ports {
             builder = builder.with_function_in_namespace(
                 "env",
-                format!("{}", op.name),
-                [PTR],
-                [PTR],
+                &op.name,
+                [ValType::I64],
+                [ValType::I64],
                 UserData::new(OutCtx { port_name: op.name.clone() }),
                 common_out,
             );
         }
 
-        let plugin = Arc::new(Mutex::new(builder.build().unwrap())); // mettre dans le state pour éviter le mutex
+        let plugin = Arc::new(Mutex::new(builder.build().unwrap())); // mettre dans le state pour éviter le mutex !!!
 
         let mut ports = HashMap::new();
 

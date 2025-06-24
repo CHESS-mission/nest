@@ -1,5 +1,5 @@
 use anyhow::Result;
-use extism::{Manifest, Plugin, Wasm, PluginBuilder, UserData, PTR, host_fn};
+use extism::{Manifest, Plugin, Wasm, PluginBuilder, UserData};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -11,9 +11,9 @@ use crossbeam_channel::{unbounded, Receiver, Select};
 
 use super::{BoolMessage, BytesMessage, Component, ComponentMonitor, ConnectablePort, FloatMessage, HasPortType, IntMessage, JsonMessage, ManagedSystemPort, MonitorCommand, PortQueueCapacity, SystemPort, TextMessage};
 
-// ---------------------------------------------------------------------------
-// NEST port description helpers
-// ---------------------------------------------------------------------------
+// This module implements the NEST WASM component.
+// Each component runs its own main loop in a thread, manages its own plugin instance and ports locally.
+
 #[derive(Clone)]
 pub enum MessageType {
     Int,
@@ -24,17 +24,19 @@ pub enum MessageType {
     Json,
 }
 
+#[derive(Clone)]
 pub struct InputPort {
     pub name: String,
     pub msg_type: MessageType,
 }
 
+#[derive(Clone)]
 pub struct OutputPort {
     pub name: String,
     pub msg_type: MessageType,
 }
 
-// Context passed to the common host function so it knows which out port triggered the call
+// Context passed to host functions so they know which output port triggered the call.
 struct OutCtx {
     port_name: String,
 }
@@ -51,6 +53,8 @@ fn message_type_to_valtype(msg_type: &MessageType) -> ValType {
     }
 }
 
+// Shared host function handler for all *_out() WASM calls.
+// Decodes the argument, tries to read it as a string, then as bytes if not valid.
 fn common_out(
     plugin: &mut extism::CurrentPlugin,
     vals: &[extism::Val],
@@ -104,9 +108,10 @@ pub struct WasmComponentConfig {
     pub output_ports: Vec<OutputPort>,
 }
 
-// State
-struct WasmComponentState;
 
+struct WasmComponentState {
+    plugin: Plugin, // Extism plugin instance, containing the WASM module and its state
+}
 
 enum GenericSystemPort {
     Int(SystemPort<WasmComponent, WasmComponentState, IntMessage>),
@@ -120,50 +125,31 @@ enum GenericSystemPort {
 // Component
 
 pub struct WasmComponent {
-    plugin: Arc<Mutex<Plugin>>,
     ports: HashMap<String, GenericSystemPort>,
+    input_ports: Vec<InputPort>,
+    wasm_url: String,
+    output_ports: Vec<OutputPort>,
 }
 
 impl WasmComponent {
-    // Creates a new WASM component from a URL
+    // Creates the SystemPorts for all input/output ports declared in the config.
+    // Each input port corresponds to an exported (relative to plugin) WASM function (e.g. i2c_in), called when a message arrives on the Rust port.
     pub fn new(config: WasmComponentConfig) -> Self {
-        let url = if config.wasm_url.starts_with("http") {
-            Wasm::url(&config.wasm_url)
-        } else {
-            Wasm::file(&config.wasm_url)
-        };
-        let manifest = Manifest::new([url]);
-
-        let mut builder = PluginBuilder::new(manifest).with_wasi(true);
-
-        // Register one host‑function per out port, all use same callback
-        for op in &config.output_ports {
-            let valtype = message_type_to_valtype(&op.msg_type);
-            builder = builder.with_function_in_namespace(
-                "env",
-                &op.name,
-                [valtype.clone()],
-                [valtype],
-                UserData::new(OutCtx { port_name: op.name.clone() }),
-                common_out,
-            );
-        }
-
-        let plugin = Arc::new(Mutex::new(builder.build().unwrap())); // mettre dans le state pour éviter le mutex !!!
+        let wasm_url = config.wasm_url.clone();
+        let input_ports = config.input_ports.clone();
+        let output_ports = config.output_ports.clone();
 
         let mut ports = HashMap::new();
 
         // INPUTS: one SystemPort per in export function from plugin
-        for ip in &config.input_ports {
+        for ip in &input_ports {
             let fn_name = format!("{}", ip.name);
             let label   = ip.name.clone();
-            let plg     = plugin.clone();
 
             // only handle TextMessage here
             let port = SystemPort::new(
-                Box::new(move |comp: &WasmComponent, _st, msg: &TextMessage| {
-                    let mut p = plg.lock().unwrap();
-                    let res = p.call::<&str, &str>(&fn_name, &msg.data)?;
+                Box::new(move |comp: &WasmComponent, state: &mut WasmComponentState, msg: &TextMessage| {
+                    let res = state.plugin.call::<&str, &str>(&fn_name, &msg.data)?;
                     println!("[wasm] {} → {}", label, res);
 
                     // If a SystemPort with the same name exists on the Rust side, forward
@@ -179,7 +165,7 @@ impl WasmComponent {
         }
 
         // OUTPUTS
-        for op in &config.output_ports {
+        for op in &output_ports {
             let lbl = op.name.clone();
             let port = SystemPort::new(
                 Box::new(move |_comp, _st, msg: &TextMessage| {
@@ -191,7 +177,12 @@ impl WasmComponent {
             ports.insert(op.name.clone(), GenericSystemPort::Text(port));
         }
 
-        Self { plugin, ports }
+        Self {
+            ports,
+            input_ports,
+            wasm_url,
+            output_ports,
+        }
     }
 
 
@@ -245,14 +236,50 @@ impl WasmComponent {
 
 
 impl Component for WasmComponent {
+    // Extism plugin is built in-thread and stored in the state.
     fn start(self) -> Result<ComponentMonitor> {
         let (tx, rx) = unbounded();
         let observable_state = Arc::new(Mutex::new(String::new()));
         let observable_state_clone = observable_state.clone();
+
+        let wasm_url = self.wasm_url.clone();
+        let output_ports = self.output_ports.clone();
+
+        let ports = self.ports;
+        let input_ports = self.input_ports.clone();
+
         let handle = thread::spawn(move || {
-            let mut state = WasmComponentState { };
-            self.loop_recv_dispatch(&mut state, &observable_state, &rx)
+            let url = if wasm_url.starts_with("http") {
+                Wasm::url(&wasm_url)
+            } else {
+                Wasm::file(&wasm_url)
+            };
+            let manifest = Manifest::new([url]);
+            let mut builder = PluginBuilder::new(manifest).with_wasi(true);
+
+            for op in &output_ports {
+                let valtype = message_type_to_valtype(&op.msg_type);
+                builder = builder.with_function_in_namespace(
+                    "env",
+                    &op.name,
+                    [valtype.clone()],
+                    [valtype],
+                    UserData::new(OutCtx { port_name: op.name.clone() }),
+                    common_out,
+                );
+            }
+
+            let plugin = builder.build().unwrap();
+            let mut state = WasmComponentState { plugin };
+            let comp = WasmComponent {
+                ports,
+                input_ports,
+                wasm_url,
+                output_ports,
+            };
+            comp.loop_recv_dispatch(&mut state, &observable_state, &rx)
         });
+
         Ok(ComponentMonitor::new(handle, tx, observable_state_clone))
     }
 }

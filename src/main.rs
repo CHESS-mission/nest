@@ -43,7 +43,7 @@ fn main() {
         input_ports: vec![ InputPort { name: "count_vowels".into(), msg_type: Text } ],
         output_ports: vec![],
     };    
-    let mut wasm_component = WasmComponent::new(config_wasm); 
+    let wasm_component = WasmComponent::new(config_wasm); 
 
     // Ping Pong WasmComponent
     let config_pingpong = WasmComponentConfig {

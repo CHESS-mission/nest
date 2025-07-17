@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use serde::Deserialize;
 use serde_json::json;
-use crate::{component::{ComponentParams, HandlerStatus, MessageDispatcher}, ports::{IntMessage, TextMessage}, set_status};
+use crate::{component::{ComponentParams, HandlerStatus, MessageDispatcher}, ports::{IntMessage, JsonMessage, TextMessage}, set_status};
 use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
 
 // Config
@@ -46,11 +46,14 @@ pub struct TestComponent {
     config: TestComponentConfig,
     cumsum_port: SystemPort<IntMessage>,
     print_port: SystemPort<TextMessage>,
+    i2c_port: SystemPort<JsonMessage>,
 }
 
 impl TestComponent {
-    pub fn new(config: TestComponentConfig, cumsum_port: SystemPort<IntMessage>, print_port: SystemPort<TextMessage>) -> Self {
-        Self { config, cumsum_port, print_port }
+    pub fn new(config: TestComponentConfig, cumsum_port: SystemPort<IntMessage>,
+               print_port: SystemPort<TextMessage>, i2c_port: SystemPort<JsonMessage>) -> Self
+    {
+        Self { config, cumsum_port, print_port, i2c_port }
     }
 }
 
@@ -119,6 +122,39 @@ impl Component for TestComponent {
                 Ok(HandlerStatus::Ok)
             }));
 
+            // Register i2c port handler
+            dispatcher.register_system_port(&self.i2c_port, Box::new(|msg, state| {
+                #[derive(Deserialize)]
+                struct I2cRequest {
+                    pub addr: u16,
+                    pub read: bool,
+                    pub len: u16, // Redundant when using Vec<u8>?
+                    pub buf: Vec<u8>,
+                }
+
+                let mut i2c_request: I2cRequest = serde_json::from_value(msg.data).unwrap();
+
+                if i2c_request.addr != 0x42 {
+                    return Ok(HandlerStatus::Ok)
+                }
+
+                if i2c_request.read {
+                    if i2c_request.len >= 1 {
+                        i2c_request.buf[0] = (self.config.initial_sum + state.current_sum) as u8;
+                    }
+                } else {
+                    if i2c_request.len >= 1 {
+                        state.current_sum += i2c_request.buf[0] as i32;
+                    }
+                }
+
+                let i2c_reply = json!({ "buf": i2c_request.buf });
+
+                self.i2c_port.send(&JsonMessage::new(i2c_reply))?;
+
+                Ok(HandlerStatus::Ok)
+            }));
+
             // Finally, start dispatching messages (blocks until HandlerStatus::Stop is returned by
             // a handler)
             dispatcher.start_dispatch(TestComponentState::default())?;
@@ -140,6 +176,7 @@ impl Component for TestComponent {
             match key.as_str() {
                 "cumsum" => test_component.cumsum_port = value.as_int()?.clone(),
                 "print" => test_component.print_port = value.as_text()?.clone(),
+                "i2c" => test_component.i2c_port = value.as_json()?.clone(),
                 _ => bail!("Unknown system port {} for TestComponent", key),
             }
         }

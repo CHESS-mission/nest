@@ -20,8 +20,11 @@
           name = "NEST devShell";
           buildInputs = [
             extism-cli
+            qemu
+            llvmPackages.clang
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
           ];
+          LIBCLANG_PATH = lib.makeLibraryPath [ pkgs.llvmPackages_16.libclang ];
         };
       }
     );

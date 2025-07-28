@@ -1,201 +1,95 @@
-// use std::collections::{HashMap, VecDeque};
-// use extism::*;
-//
-// #[derive(Clone, Debug)]
-// pub enum PortType {
-//     Int,
-//     Float,
-//     Bool,
-//     Bytes,
-//     Text,
-//     Json,
-// }
-//
-// #[derive(Clone, Debug)]
-// pub enum Direction {
-//     Input,
-//     Output,
-// }
-//
-// #[derive(Clone, Debug)]
-// pub struct Port {
-//     pub name: String,
-//     pub port_type: PortType,
-//     pub direction: Direction,
-// }
-//
-// #[derive(Clone, Debug)]
-// pub enum Message {
-//     Int(i32),
-//     Float(f32),
-//     Bool(bool),
-//     Bytes(Vec<u8>),
-//     Text(String),
-//     Json(String),
-// }
-//
-// pub enum ComponentType {
-//     Internal, // call it rust ?
-//     Wasm { plugin: Plugin },
-// }
-//
-// pub struct Wire { // use crossbeam for multithread
-//     pub from: (String, String), // (component_name, port_name)
-//     pub to: (String, String),
-//     pub buffer: VecDeque<Message>,
-// }
-//
-// impl Wire {
-//     fn new(from: (String, String), to: (String, String)) -> Self {
-//         Wire {
-//             from,
-//             to,
-//             buffer: VecDeque::new(),
-//         }
-//     }
-// }
-//
-// pub struct Component {
-//     pub name: String,
-//     pub ports: HashMap<String, Port>, // can have multiple ports, identified by a name
-//     pub comp_type: ComponentType, // internal or wasm
-// }
-//
-// impl Component {
-//     pub fn handle_message(&mut self, port: &str, msg: &Message) {
-//         match &mut self.comp_type { // match on component type
-//             ComponentType::Internal => {
-//                 println!("{} [internal] received on {}: {:?}", self.name, port, msg);
-//             }
-//             ComponentType::Wasm { plugin } => {
-//                 if let Message::Text(text) = msg {
-//                     let res = plugin.call::<&str, &str>("count_vowels", text)
-//                         .expect("plugin call failed");
-//                     println!("{} [wasm] plugin returned: {}", self.name, res);
-//                 }
-//             }
-//         }
-//     }
-// }
-//
-// // Simulator holds all components and wires
-// pub struct Simulator {
-//     pub components: HashMap<String, Component>,
-//     pub wires: Vec<Wire>,
-// }
-//
-// impl Simulator {
-//     pub fn send_message(&mut self, from: (&str, &str), msg: Message) { // just need "from" which port to send message
-//         for wire in &mut self.wires { // find corresponding wire and add msg to buffer
-//             if wire.from == (from.0.to_string(), from.1.to_string()) {
-//                 wire.buffer.push_back(msg.clone());
-//             }
-//         }
-//     }
-//
-//     pub fn receive_message(&mut self, to: (&str, &str)) -> Option<Message> { // just need "to" which port to receive message
-//         for wire in &mut self.wires { // find corresponding wire and retrieve msg from buffer
-//             if wire.to == (to.0.to_string(), to.1.to_string()) {
-//                 return wire.buffer.pop_front();
-//             }
-//         }
-//         None // if no message found
-//     }
-// }
-//
-// fn main() {
-//     let mut sim = Simulator {
-//         components: HashMap::new(),
-//         wires: vec![],
-//     };
-//
-//     // Create compA with an output port
-//     let mut comp_a = Component {
-//         name: "CompA".to_string(),
-//         ports: HashMap::new(),
-//         comp_type: ComponentType::Internal,
-//     };
-//     comp_a.ports.insert("out".to_string(), Port {
-//         name: "out".to_string(),
-//         port_type: PortType::Text,
-//         direction: Direction::Output,
-//     });
-//
-//     sim.components.insert("CompA".to_string(), comp_a); // add comp to simulation
-//
-//     // Create compB with an input port (WASM)
-//     let url = Wasm::url("https://github.com/extism/plugins/releases/latest/download/count_vowels.wasm");
-//     let manifest = Manifest::new([url]);
-//     let plugin = Plugin::new(&manifest, [], true).unwrap();
-//
-//     let mut comp_b = Component {
-//         name: "CompB".to_string(),
-//         ports: HashMap::new(),
-//         comp_type: ComponentType::Wasm { plugin },
-//     };
-//     comp_b.ports.insert("in".to_string(), Port {
-//         name: "in".to_string(),
-//         port_type: PortType::Text,
-//         direction: Direction::Input,
-//     });
-//
-//     sim.components.insert("CompB".to_string(), comp_b);
-//
-//     // Wire between CompA out port and CompB in port
-//     sim.wires.push(Wire::new(
-//         ("CompA".to_string(), "out".to_string()), // (component_name, port_name)
-//         ("CompB".to_string(), "in".to_string()),
-//     ));
-//
-//     // Send/receive message test
-//     sim.send_message(("CompA", "out"), Message::Text("Ping!".to_string()));
-//
-//     if let Some(msg) = sim.receive_message(("CompB", "in")) {
-//         println!("CompB received: {:?}", msg);
-//         if let Some(comp) = sim.components.get_mut("CompB") {
-//             comp.handle_message("in", &msg);
-//         }
-//     }
-// }
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
-use std::{thread::sleep, time::Duration};
-use nest::component::{test::{TestComponent, TestComponentConfig}, Component, ConnectablePort, HasPortType, IntMessage, TextMessage};
+use nest::component::test::TestComponentConfig;
+use nest::component::{Component, LogEntry};
+use nest::component::{test::TestComponent, ComponentParams};
+use nest::ports::{GenericSystemPort, IntMessage, SystemPort, TextMessage};
 
 fn main() {
-    // Instantiate components
-    let config1 = TestComponentConfig { initial_sum: 42, greeting: "Hey!".into() };
-    let mut test1 = TestComponent::new(config1);
+    // Create component test1 using new flexible parameters approach
+    let mut params = ComponentParams::new();
 
-    let config2 = TestComponentConfig { initial_sum: -100, greeting: "Hello!".into() };
-    let mut test2 = TestComponent::new(config2);
+    params.add_config_entry("initial_sum", "42");
+    params.add_config_entry("greeting", "Hey!");
+
+    params.add_system_port("cumsum", GenericSystemPort::Int(SystemPort::default()));
+    params.add_system_port("print", GenericSystemPort::Text(SystemPort::default()));
+
+    // Create component test2 using traditional approach
+    let mut config = TestComponentConfig::default();
+    config.initial_sum = -100;
+    config.greeting = "Hello!".into();
+
+    let mut test2_cumsum_port = SystemPort::<IntMessage>::default();
+    let mut test2_print_port = SystemPort::<TextMessage>::default();
 
     // Connect ports
-    let print1: &mut dyn ConnectablePort<TextMessage> = test1.port_by_name_mut("print").unwrap();
-    let print2: &mut dyn ConnectablePort<TextMessage> = test2.port_by_name_mut("print").unwrap();
+    let test1_cumsum_port = params.system_port_mut("cumsum").unwrap().as_int_mut().unwrap();
+    test1_cumsum_port.connect_to(&test2_cumsum_port);
+    test2_cumsum_port.connect_to(&test1_cumsum_port);
 
-    print1.connect_to(print2);
-    print2.connect_to(print1);
+    let test1_print_port = params.system_port_mut("print").unwrap().as_text_mut().unwrap();
+    test1_print_port.connect_to(&test2_print_port);
+    test2_print_port.connect_to(&test1_print_port);
 
-    let cumsum1 = test1.port_by_name_mut("cumsum").unwrap();
-    let cumsum2 = test2.port_by_name_mut("cumsum").unwrap();
+    // Manually send messages for testing
+    let test1_cumsum_port = params.system_port_mut("cumsum").unwrap().as_int_mut().unwrap();
+    test1_cumsum_port.send(&IntMessage::new(10)).unwrap();
+    test1_cumsum_port.send(&IntMessage::new(-38)).unwrap();
 
-    cumsum1.connect_to(cumsum2);
-    cumsum2.connect_to(cumsum1);
+    test2_cumsum_port.send(&IntMessage::new(8)).unwrap();
+    test2_cumsum_port.send(&IntMessage::new(150)).unwrap();
+    test2_cumsum_port.send(&IntMessage::new(56)).unwrap();
 
-    // Manually send messages
-    cumsum1.send(&IntMessage::new(10)).unwrap();
-    cumsum1.send(&IntMessage::new(-38)).unwrap();
+    // Instantiate both components
+    let test1 = TestComponent::from_params(&params).unwrap();
+    let test2 = TestComponent::new(config, test2_cumsum_port, test2_print_port);
 
-    cumsum2.send(&IntMessage::new(8)).unwrap();
-    cumsum2.send(&IntMessage::new(150)).unwrap();
-    cumsum2.send(&IntMessage::new(56)).unwrap();
-
-    // Start components
+    // Start component
+    let start = Instant::now();
     let monitor1 = test1.start().unwrap();
     let monitor2 = test2.start().unwrap();
 
+    // Wait for components to start and handle messages
     sleep(Duration::from_millis(100));
 
+    // Play around reading logs and final status :)
+    fn format_log_entry(entry: &LogEntry, start: Instant) -> String {
+        let elapsed = entry.timestamp.duration_since(start);
+
+        let total_secs = elapsed.as_secs();
+        let hours = total_secs / 3600;
+        let minutes = (total_secs % 3600) / 60;
+        let seconds = total_secs % 60;
+        let millis = elapsed.subsec_millis();
+
+        let time = format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis);
+
+        format!("{}: [{:?}] {}", time, entry.level, entry.message)
+    }
+
+    println!("\n====== TestComponent 1 ======");
+    println!("\nstatus: {}", serde_json::to_string_pretty(
+        &monitor1.status().unwrap()
+    ).unwrap());
+
+    println!("\nlogs:");
+    while let Ok(entry) = monitor1.log_receiver().try_recv() {
+        println!("{}", format_log_entry(&entry, start));
+    }
+
+    println!("\n====== TestComponent 2 ======");
+    println!("\nstatus: {}", serde_json::to_string_pretty(
+        &monitor2.status().unwrap()
+    ).unwrap());
+
+    println!("\nlogs:");
+    while let Ok(entry) = monitor2.log_receiver().try_recv() {
+        println!("{}", format_log_entry(&entry, start));
+    }
+
+    // Stop the components
     monitor1.stop().unwrap();
     monitor2.stop().unwrap();
 }

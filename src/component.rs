@@ -105,13 +105,13 @@ impl<'a, S: 'a> MessageDispatcher<'a, S> {
     }
 
     /// Register a new receiver and callback.
-    pub fn register<T: Send + 'static>(&mut self, receiver: Receiver<T>, callback: Box<dyn Fn(&T, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
+    pub fn register<T: Send + 'static>(&mut self, receiver: Receiver<T>, callback: Box<dyn Fn(T, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
         let handler = TypedMessageHandler::new(receiver, callback);
         self.message_handlers.push(Box::new(handler));
     }
 
     /// Register a new [SystemPort] and callback.
-    pub fn register_system_port<M: Message>(&mut self, system_port: &SystemPort<M>, callback: Box<dyn Fn(&M, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
+    pub fn register_system_port<M: Message>(&mut self, system_port: &SystemPort<M>, callback: Box<dyn Fn(M, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
         self.register(system_port.receiver().clone(), callback);
     }
 
@@ -151,11 +151,11 @@ trait MessageHandler<S>: Send {
 
 struct TypedMessageHandler<'a, T, S> {
     receiver: Receiver<T>,
-    callback: Box<dyn Fn(&T, &mut S) -> Result<HandlerStatus> + Send + 'a>,
+    callback: Box<dyn Fn(T, &mut S) -> Result<HandlerStatus> + Send + 'a>,
 }
 
 impl<'a, T, S> TypedMessageHandler<'a, T, S> {
-    fn new(receiver: Receiver<T>, handler: Box<dyn Fn(&T, &mut S) -> Result<HandlerStatus> + Send + 'a>) -> Self {
+    fn new(receiver: Receiver<T>, handler: Box<dyn Fn(T, &mut S) -> Result<HandlerStatus> + Send + 'a>) -> Self {
         Self { receiver, callback: handler }
     }
 }
@@ -170,7 +170,7 @@ impl<'a, T: Send + 'static, S> MessageHandler<S> for TypedMessageHandler<'a, T, 
 
     fn handle(&self, state: &mut S) -> Result<HandlerStatus> {
         match self.receiver.recv() {
-            Ok(msg) => (self.callback)(&msg, state),
+            Ok(msg) => (self.callback)(msg, state),
             Err(e) => Err(e.into()),
         }
     }

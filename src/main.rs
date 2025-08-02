@@ -1,5 +1,28 @@
-use nest::{component::{qemu::QemuComponent, test::{TestComponent, TestComponentConfig}, Component, ComponentParams}, ports::{GenericSystemPort, JsonMessage, SystemPort}};
+use std::time::{Duration, Instant};
 use serde_json::json;
+
+use nest::{
+    component::{
+        Component, ComponentParams, LogEntry,
+        qemu::QemuComponent,
+        test::{TestComponent, TestComponentConfig},
+    },
+    ports::{GenericSystemPort, JsonMessage, SystemPort},
+};
+
+fn format_log_entry(entry: &LogEntry, start: Instant) -> String {
+    let elapsed = entry.timestamp.duration_since(start);
+
+    let total_secs = elapsed.as_secs();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+    let millis = elapsed.subsec_millis();
+
+    let time = format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis);
+
+    format!("{}: [{:?}] {}", time, entry.level, entry.message)
+}
 
 fn main() {
     // Create and connect ports
@@ -31,15 +54,28 @@ fn main() {
     qemu_params.add_system_port("i2c", GenericSystemPort::Json(qemu_i2c_port));
 
     let qemu = QemuComponent::from_params(&qemu_params).unwrap();
-    
+
     // Instantiate Test component
-    let test_config = TestComponentConfig { initial_sum: 0x0f, greeting: "Hey!".into() };
-    let test = TestComponent::new(test_config, SystemPort::default(), SystemPort::default(), test_i2c_port);
+    let test_config = TestComponentConfig {
+        initial_sum: 0x0f,
+        greeting: "Hey!".into(),
+    };
+    let test = TestComponent::new(
+        test_config,
+        SystemPort::default(),
+        SystemPort::default(),
+        test_i2c_port,
+    );
 
     // Start components
+    let start = Instant::now();
     let _test_monitor = test.start().unwrap();
-    let _qemu_monitor = qemu.start().unwrap();
+    let qemu_monitor = qemu.start().unwrap();
 
     // Infinite loop
-    loop {}
+    loop {
+        // Print logs received from qemu component
+        let entry = qemu_monitor.log_receiver().recv().unwrap();
+        println!("{}", format_log_entry(&entry, start));
+    }
 }

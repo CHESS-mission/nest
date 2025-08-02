@@ -1183,6 +1183,8 @@ dependencies = [
  "extism",
  "serde",
  "serde_json",
+ "thiserror 2.0.12",
+ "uuid",
  "vhost",
  "vhost-user-backend",
  "virtio-bindings",

@@ -1,33 +1,26 @@
-use std::{path::{Path, PathBuf}, process::{Child, Command}, sync::{Arc, RwLock}, thread::{spawn, JoinHandle}, time::Duration};
+mod instance;
 
-use anyhow::{anyhow, bail, Result};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
+    thread::{JoinHandle, spawn},
+    time::Duration,
+};
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use anyhow::{Result, anyhow, bail};
+
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use serde::Deserialize;
 use serde_json::json;
 use vhost_user_backend::VhostUserDaemon;
 use vm_memory::{GuestMemoryAtomic, GuestMemoryMmap};
 
 use crate::{
-    component::{Component, ComponentMonitor, ComponentParams, HandlerStatus, MessageDispatcher, MonitorCommand},
+    component::{
+        qemu::instance::{QemuConfig, QemuInstance}, Component, ComponentMonitor, ComponentParams, HandlerStatus, MessageDispatcher, MonitorCommand
+    },
     ports::{JsonMessage, SystemPort},
-    vhost_user::i2c::{I2cReq, VhostUserI2cBackend, I2C_M_RD}
 };
-
-// qemu-system-arm \
-//   -m 1G -cpu cortex-a7 -M virt \
-//   -kernel ./image/zImage \
-//   -append "rootwait root=/dev/vda console=ttyAMA0" \
-//   -drive if=none,file=./image/disk.qcow2,id=hd0 \
-//   -device virtio-blk-device,drive=hd0 \
-//   -netdev user,id=nic -device virtio-net-device,netdev=nic \
-//   -serial mon:stdio \
-//   -nographic \
-//
-//   -chardev socket,path=/tmp/vi2c.sock0,id=vi2c \
-//   -device vhost-user-i2c-pci,chardev=vi2c,id=i2c \
-//   -object memory-backend-file,id=mem,size=1G,mem-path=/dev/shm,share=on \
-//   -numa node,memdev=mem  \
 
 fn make_socket_path(stem: &str) -> Result<PathBuf> {
     let mut it = 0..65536;
@@ -50,6 +43,7 @@ pub struct QemuComponentConfigOption {
 #[serde(deny_unknown_fields)]
 pub struct QemuComponentConfig {
     pub arch: String,
+    mem_mb: u32,
     #[serde(default)]
     pub options: Vec<QemuComponentConfigOption>,
     #[serde(default = "default_i2c_timeout_ms")]
@@ -64,7 +58,8 @@ fn default_i2c_timeout_ms() -> u64 {
 impl Default for QemuComponentConfig {
     fn default() -> Self {
         QemuComponentConfig {
-            arch: "".into(),
+            arch: "arm".into(),
+            mem_mb: 1024,
             options: Vec::new(),
             i2c_timeout_ms: default_i2c_timeout_ms(),
             i2c_socket: None,
@@ -72,9 +67,15 @@ impl Default for QemuComponentConfig {
     }
 }
 
-#[derive(Default)]
 pub struct QemuComponentState {
     update_status: bool,
+    qemu_instance: QemuInstance,
+}
+
+impl QemuComponentState {
+    pub fn new(update_status: bool, qemu_instance: QemuInstance) -> Self {
+        Self { update_status, qemu_instance }
+    }
 }
 
 #[derive(Default)]
@@ -110,25 +111,6 @@ impl QemuComponent {
 
         Ok(handle)
     }
-
-    fn start_qemu<P: AsRef<Path>>(&self, i2c_socket: P) -> Result<Child> {
-        let child = Command::new(format!("qemu-system-{}", self.config.arch))
-            .args(self.config.options.iter().flat_map(|QemuComponentConfigOption {option: name, value}| {
-                std::iter::once(format!("-{}", name)).chain(value.iter().cloned())
-            }))
-            .args([
-                "-chardev", &format!("socket,path={},id=vi2c", i2c_socket.as_ref().to_string_lossy()),
-                "-device", "vhost-user-i2c-pci,chardev=vi2c,id=i2c",
-                "-object", "memory-backend-file,id=mem,size=1G,mem-path=/dev/shm,share=on",
-                "-numa", "node,memdev=mem",
-            ])
-            // .stderr(Stdio::piped())
-            // .stdin(Stdio::piped())
-            // .stdout(Stdio::piped())
-            .spawn()?;
-
-        Ok(child)
-    }
 }
 
 impl Component for QemuComponent {
@@ -140,9 +122,6 @@ impl Component for QemuComponent {
         let (i2c_backend_requests_tx, i2c_backend_requests_rx) = unbounded();
         let (i2c_backend_replies_tx, i2c_backend_replies_rx) = unbounded();
         let i2c_backend_handle = self.start_i2c_backend(i2c_backend_replies_rx, i2c_backend_requests_tx, &i2c_socket)?;
-
-        // Start Qemu
-        self.start_qemu(&i2c_socket)?;
 
         let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, _status| {
             let mut dispatcher = MessageDispatcher::<QemuComponentState>::new();
@@ -187,8 +166,25 @@ impl Component for QemuComponent {
                 Ok(HandlerStatus::Ok)
             }));
 
+            // Configure qemu instance
+            let mut qemu_config = QemuConfig::new(self.config.arch, self.config.mem_mb);
+            for option in &self.config.options {
+                match option.value {
+                    Some(value) => qemu_config.add_option(option.option, value),
+                    None => qemu_config.add_flag(option.option),
+                }
+            }
+
+            // Set i2c backend socket
+            qemu_config.set_i2c_backend_socket(i2c_socket);
+
+            // Start qemu instance
+            let qemu_instance = QemuInstance::spawn(qemu_config)?;
+            logger.info(&format!("Spawned QEMU instance: {}", qemu_instance.cmd_line()))?;
+
             // Start dispatcher
-            dispatcher.start_dispatch(QemuComponentState::default())?;
+            let state = QemuComponentState::new(false, qemu_instance);
+            dispatcher.start_dispatch(state)?;
 
             // Stop the backend
             i2c_backend_handle.join().unwrap()?;

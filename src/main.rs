@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use serde_json::json;
 
 use nest::{
@@ -37,9 +37,9 @@ fn main() {
 
     qemu_params.set_config(json!({
         "arch": "arm",
+        "mem_mb": 1024,
         "i2c_timeout_ms": 50,
         "options": [
-            { "option": "m", "value": "1024" },
             { "option": "cpu", "value": "cortex-a7" },
             { "option": "M", "value": "virt" },
             { "option": "kernel", "value": "./image/zImage" },

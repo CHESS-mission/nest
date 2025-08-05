@@ -1,8 +1,15 @@
-use anyhow::{bail, Result};
+use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
+use crate::{
+    component::{
+        ComponentParams, HandlerStatus, MessageDispatcher,
+        qemu::{I2cOperation, I2cRequest, I2cResponse},
+    },
+    ports::{IntMessage, JsonMessage, TextMessage},
+    set_status,
+};
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use serde_json::json;
-use crate::{component::{ComponentParams, HandlerStatus, MessageDispatcher}, ports::{IntMessage, JsonMessage, TextMessage}, set_status};
-use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
 
 // Config
 
@@ -124,33 +131,33 @@ impl Component for TestComponent {
 
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|msg, state| {
-                #[derive(Deserialize)]
-                struct I2cRequest {
-                    pub addr: u16,
-                    pub read: bool,
-                    pub len: u16, // Redundant when using Vec<u8>?
-                    pub buf: Vec<u8>,
-                }
+                let request: I2cRequest = serde_json::from_value(msg.data).unwrap();
 
-                let mut i2c_request: I2cRequest = serde_json::from_value(msg.data).unwrap();
-
-                if i2c_request.addr != 0x42 {
+                if request.addr != 0x42 {
                     return Ok(HandlerStatus::Ok)
                 }
 
-                if i2c_request.read {
-                    if i2c_request.len >= 1 {
-                        i2c_request.buf[0] = (self.config.initial_sum + state.current_sum) as u8;
+                let response = match request.op {
+                    I2cOperation::Write(buf) => {
+                        if buf.len() >= 1 {
+                            state.current_sum += buf[0] as i32;
+                        } else {
+                            logger.warning("Received zero-length i2c write request")?
+                        }
+                        serde_json::to_value(I2cResponse::Write)?
                     }
-                } else {
-                    if i2c_request.len >= 1 {
-                        state.current_sum += i2c_request.buf[0] as i32;
+                    I2cOperation::Read(len) => {
+                        let mut buf = Vec::new();
+                        if len >= 1 {
+                            buf.push((self.config.initial_sum + state.current_sum) as u8);
+                        } else {
+                            logger.warning("Received zero-length i2c read request")?
+                        }
+                        serde_json::to_value(I2cResponse::Read(buf))?
                     }
-                }
+                };
 
-                let i2c_reply = json!({ "buf": i2c_request.buf });
-
-                self.i2c_port.send(&JsonMessage::new(i2c_reply))?;
+                self.i2c_port.send(&JsonMessage::new(response))?;
 
                 Ok(HandlerStatus::Ok)
             }));

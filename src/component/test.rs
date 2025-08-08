@@ -1,158 +1,154 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}, thread};
-
-use anyhow::Result;
-use crossbeam_channel::{unbounded, Receiver, Select, Sender};
-
-use super::{BoolMessage, BytesMessage, Component, ComponentMonitor, ConnectablePort, FloatMessage, HasPortType, IntMessage, JsonMessage, ManagedSystemPort, MonitorCommand, PortQueueCapacity, SystemPort, TextMessage};
+use anyhow::{bail, Result};
+use serde_json::json;
+use crate::{component::{ComponentParams, HandlerStatus, MessageDispatcher}, ports::{IntMessage, TextMessage}, set_status};
+use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
 
 // Config
 
+#[derive(Clone, Debug)]
 pub struct TestComponentConfig {
     pub initial_sum: i32,
     pub greeting: String,
 }
 
-// State
-
-struct TestComponentState {
-    pub current_sum: i32,
+impl Default for TestComponentConfig {
+    fn default() -> Self {
+        TestComponentConfig {
+            initial_sum: 0,
+            greeting: "Hello!".into(),
+        }
+    }
 }
 
-enum GenericSystemPort {
-    Int(SystemPort<TestComponent, TestComponentState, IntMessage>),
-    Float(SystemPort<TestComponent, TestComponentState, FloatMessage>),
-    Bool(SystemPort<TestComponent, TestComponentState, BoolMessage>),
-    Bytes(SystemPort<TestComponent, TestComponentState, BytesMessage>),
-    Text(SystemPort<TestComponent, TestComponentState, TextMessage>),
-    Json(SystemPort<TestComponent, TestComponentState, JsonMessage>),
+// State
+
+#[derive(Clone, Debug)]
+struct TestComponentState {
+    pub current_sum: i32,
+    pub update_status: bool,
+}
+
+impl Default for TestComponentState {
+    fn default() -> Self {
+        TestComponentState {
+            current_sum: 0,
+            update_status: true,
+        }
+    }
 }
 
 // Component
 
+#[derive(Default)]
 pub struct TestComponent {
-    ports: HashMap<String, GenericSystemPort>,
+    config: TestComponentConfig,
+    cumsum_port: SystemPort<IntMessage>,
+    print_port: SystemPort<TextMessage>,
 }
 
 impl TestComponent {
-    pub fn new(config: TestComponentConfig) -> Self {
-        // Create ports
-        let cumsum: SystemPort<TestComponent, TestComponentState, IntMessage> = SystemPort::new(
-            Box::new(move |hub, state, msg| {
-                state.current_sum += msg.data;
-                let output = TextMessage::new(&format!("Cumulative sum: {}", config.initial_sum + state.current_sum));
-                hub.port_by_name("print").unwrap().send(&output)?;
-                Ok(())
-            }),
-            PortQueueCapacity::Unbounded);
-
-        let print: SystemPort<TestComponent, TestComponentState, TextMessage> = SystemPort::new(
-            Box::new(move |_hub, _state, msg| {
-                println!("{} Got: {}", config.greeting, msg.data);
-                Ok(())
-            }),
-            PortQueueCapacity::Unbounded);
-
-        let mut ports = HashMap::new();
-
-        ports.insert("cumsum".into(), GenericSystemPort::Int(cumsum));
-        ports.insert("print".into(), GenericSystemPort::Text(print));
-
-        Self { ports }
-    }
-
-    fn loop_recv_dispatch(&self, state: &mut TestComponentState, observable_state: &Arc<Mutex<String>>, monitor_rx: &Receiver<MonitorCommand>) -> Result<()> {
-        let mut sel = Select::new();
-
-        // Register monitor rx at index 0
-        sel.recv(monitor_rx);
-
-        // Register all ports
-        let ports: Vec<_> = self.ports.values().collect();
-        for port in &ports {
-            Self::generic_to_managed(port).register(&mut sel);
-        }
-
-        let mut update_observable_state = false;
-
-        loop {
-            // Wait until a receive operation becomes ready and try executing it.
-            let index = sel.ready();
-
-            if index == 0 {
-                // Handle monitor command
-                match monitor_rx.recv()? {
-                    MonitorCommand::Stop => return Ok(()),
-                    MonitorCommand::StartObservableStateUpdates => update_observable_state = true,
-                    MonitorCommand::StopObservableStateUpdates => update_observable_state = false,
-                }
-            } else {
-                // Dispatch to port
-                Self::generic_to_managed(&ports[index-1]).recv(self, state)?;
-            }
-
-            if update_observable_state {
-                *observable_state.lock().unwrap() = format!("Current sum: {}", state.current_sum);
-            }
-        }
-    }
-
-    fn generic_to_managed(gen_port: &GenericSystemPort) -> &(dyn ManagedSystemPort<Self, TestComponentState>) {
-        match gen_port {
-            GenericSystemPort::Int(port) => port as &dyn ManagedSystemPort<Self, TestComponentState>,
-            GenericSystemPort::Float(port) => port as &dyn ManagedSystemPort<Self, TestComponentState>,
-            GenericSystemPort::Bool(port) => port as &dyn ManagedSystemPort<Self, TestComponentState>,
-            GenericSystemPort::Bytes(port) => port as &dyn ManagedSystemPort<Self, TestComponentState>,
-            GenericSystemPort::Text(port) => port as &dyn ManagedSystemPort<Self, TestComponentState>,
-            GenericSystemPort::Json(port) => port as &dyn ManagedSystemPort<Self, TestComponentState>,
-        }
+    pub fn new(config: TestComponentConfig, cumsum_port: SystemPort<IntMessage>, print_port: SystemPort<TextMessage>) -> Self {
+        Self { config, cumsum_port, print_port }
     }
 }
 
 impl Component for TestComponent {
     fn start(self) -> Result<ComponentMonitor> {
-        let (tx, rx) = unbounded();
-        let observable_state = Arc::new(Mutex::new(String::new()));
-        let observable_state_clone = observable_state.clone();
-        let handle = thread::spawn(move || {
-            let mut state = TestComponentState { current_sum: 0 };
-            self.loop_recv_dispatch(&mut state, &observable_state, &rx)
+        // ComponentMonitor::start_monitor creates a new monitor for the provided closure and
+        // takes care of spawning it as a new thread. It also passes fully initialized
+        // command_receiver, logger and status instances to the closure.
+        let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, status| {
+            // Set initial status using the set_status macro
+            set_status!(status.cumulative_sum, json!(0))?;
+
+            // Create a new MessageDispatcher for registering message handlers
+            let mut dispatcher = MessageDispatcher::<TestComponentState>::new();
+
+            // Register a handler for the command_receiver. The callback function will be called each
+            // time a message is received from that receiver, with the message and a custom mutable
+            // object (state). Here, that state is of type TestComponentState.
+            dispatcher.register(command_receiver, Box::new(|msg, state| {
+                match msg {
+                    MonitorCommand::Stop => {
+                        // Log infos with the logger
+                        logger.info("Stopping component")?;
+                        // To stop handling further messages, return HandlerStatus::Stop
+                        return Ok(HandlerStatus::Stop);
+                    }
+                    MonitorCommand::StartStatusUpdates => {
+                        logger.info("Starting status updates")?;
+                        // Update the state object. This modification will be visible from other
+                        // closures since they all receive the object as argument.
+                        state.update_status = true;
+                    }
+                    MonitorCommand::StopStatusUpdates => {
+                        logger.info("Stopping status updates")?;
+                        state.update_status = false;
+                    }
+                }
+
+                // If everything went well, return HandlerStatus::Ok
+                Ok(HandlerStatus::Ok)
+            }));
+
+            // Register a handler for the cumsum port
+            dispatcher.register_system_port(&self.cumsum_port, Box::new(|msg, state| {
+                state.current_sum += msg.data;
+                let cumsum = self.config.initial_sum + state.current_sum;
+
+                if state.update_status {
+                    // Update the cumulative_sum property of the status using the set_status macro.
+                    // This will be visible from outside the component (e.g. displayed in a GUI).
+                    set_status!(status.cumulative_sum, json!(cumsum))?;
+                }
+                logger.info(&format!("New cumulative sum: {}", cumsum))?;
+
+                // Send a message through the component's print port
+                let output = TextMessage::new(&format!("Cumulative sum: {}", cumsum));
+                self.print_port.send(&output)?;
+
+                Ok(HandlerStatus::Ok)
+            }));
+
+            // Register a simple handler for the print port. Note that in general components
+            // should not use println, this is just for demonstration purposes.
+            dispatcher.register_system_port(&self.print_port, Box::new(|msg, _state| {
+                println!("{} Got: {}", self.config.greeting, msg.data);
+                Ok(HandlerStatus::Ok)
+            }));
+
+            // Finally, start dispatching messages (blocks until HandlerStatus::Stop is returned by
+            // a handler)
+            dispatcher.start_dispatch(TestComponentState::default())?;
+            Ok(())
         });
-        Ok(ComponentMonitor::new(handle, tx, observable_state_clone))
+
+        // Return the monitor to the calling thread
+        Ok(monitor)
     }
-}
 
-macro_rules! impl_has_port_type {
-    ( $enum_type:ident : $( $variant:ident => $msg_type:ty ),* $(,)? ) => {
-        $(
-            impl HasPortType<$msg_type> for TestComponent {
-                fn port_by_name(&self, name: &str) -> Option<&dyn ConnectablePort<$msg_type>> {
-                    self.ports.get(name).and_then(|v|
-                        match v {
-                            $enum_type::$variant(port) => Some(port as &dyn ConnectablePort<$msg_type>),
-                            _ => None
-                        }
-                    )
-                }
+    fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
+        let mut test_component = Self::default();
 
-                fn port_by_name_mut(&mut self, name: &str) -> Option<&mut dyn ConnectablePort<$msg_type>> {
-                    self.ports.get_mut(name).and_then(|v|
-                        match v {
-                            $enum_type::$variant(port) => Some(port as &mut dyn ConnectablePort<$msg_type>),
-                            _ => None
-                        }
-                    )
-                }
+        // Parse config parameters into a TestComponentConfig
+        for (key, value) in &params.config {
+            match key.as_str() {
+                "initial_sum" => test_component.config.initial_sum = value.parse()?,
+                "greeting" => test_component.config.greeting = value.clone(),
+                _ => bail!("Unknown config parameter {} for TestComponent", key),
             }
-        )*
-    };
-}
+        }
 
-impl_has_port_type! {
-    GenericSystemPort:
-        Int => IntMessage,
-        Float => FloatMessage,
-        Bool => BoolMessage,
-        Bytes => BytesMessage,
-        Text => TextMessage,
-        Json => JsonMessage,
+        // Get system ports from params
+        for (key, value) in &params.system_ports {
+            match key.as_str() {
+                "cumsum" => test_component.cumsum_port = value.as_int()?.clone(),
+                "print" => test_component.print_port = value.as_text()?.clone(),
+                _ => bail!("Unknown system port {} for TestComponent", key),
+            }
+        }
+
+        // Return the fully initialized component
+        Ok(test_component)
+    }
 }

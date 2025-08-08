@@ -1,133 +1,105 @@
-use std::{thread::sleep, time::Duration};
-use nest::component::{
-    test::{TestComponent, TestComponentConfig}, wasm::{WasmComponent, WasmComponentConfig}, Component, ConnectablePort, HasPortType, IntMessage, TextMessage,
-};
-use nest::component::wasm::{InputPort, OutputPort, MessageType::Text};
-use serde_json;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
-
+use nest::component::test::TestComponentConfig;
+use nest::component::{Component, LogEntry};
+use nest::component::{test::TestComponent, ComponentParams};
+use nest::ports::{GenericSystemPort, IntMessage, SystemPort, TextMessage};
 
 fn main() {
-    // Instantiate components
-    let config1 = TestComponentConfig { initial_sum: 42, greeting: "Hey!".into() };
-    let mut test1 = TestComponent::new(config1);
+    // Create component test1 using new flexible parameters approach
+    let mut params = ComponentParams::new();
 
-    let config2 = TestComponentConfig { initial_sum: -100, greeting: "Hello!".into() };
-    let mut test2 = TestComponent::new(config2);
+    params.add_config_entry("initial_sum", "42");
+    params.add_config_entry("greeting", "Hey!");
+
+    params.add_system_port("cumsum", GenericSystemPort::Int(SystemPort::default()));
+    params.add_system_port("print", GenericSystemPort::Text(SystemPort::default()));
+
+    // Create component test2 using traditional approach
+    let mut config = TestComponentConfig::default();
+    config.initial_sum = -100;
+    config.greeting = "Hello!".into();
+
+    let mut test2_cumsum_port = SystemPort::<IntMessage>::default();
+    let mut test2_print_port = SystemPort::<TextMessage>::default();
 
     // Connect ports
-    let print1: &mut dyn ConnectablePort<TextMessage> = test1.port_by_name_mut("print").unwrap();
-    let print2: &mut dyn ConnectablePort<TextMessage> = test2.port_by_name_mut("print").unwrap();
+    let test1_cumsum_port = params.system_port_mut("cumsum").unwrap().as_int_mut().unwrap();
+    test1_cumsum_port.connect_to(&test2_cumsum_port);
+    test2_cumsum_port.connect_to(&test1_cumsum_port);
 
-    print1.connect_to(print2);
-    print2.connect_to(print1);
+    let test1_print_port = params.system_port_mut("print").unwrap().as_text_mut().unwrap();
+    test1_print_port.connect_to(&test2_print_port);
+    test2_print_port.connect_to(&test1_print_port);
 
-    let cumsum1 = test1.port_by_name_mut("cumsum").unwrap();
-    let cumsum2 = test2.port_by_name_mut("cumsum").unwrap();
+    // Manually send messages for testing
+    let test1_cumsum_port = params.system_port_mut("cumsum").unwrap().as_int_mut().unwrap();
+    test1_cumsum_port.send(&IntMessage::new(10)).unwrap();
+    test1_cumsum_port.send(&IntMessage::new(-38)).unwrap();
 
-    cumsum1.connect_to(cumsum2);
-    cumsum2.connect_to(cumsum1);
+    test2_cumsum_port.send(&IntMessage::new(8)).unwrap();
+    test2_cumsum_port.send(&IntMessage::new(150)).unwrap();
+    test2_cumsum_port.send(&IntMessage::new(56)).unwrap();
 
-    // Manually send messages
-    cumsum1.send(&IntMessage::new(10)).unwrap();
-    cumsum1.send(&IntMessage::new(-38)).unwrap();
+    // Instantiate both components
+    let test1 = TestComponent::from_params(&params).unwrap();
+    let test2 = TestComponent::new(config, test2_cumsum_port, test2_print_port);
 
-    cumsum2.send(&IntMessage::new(8)).unwrap();
-    cumsum2.send(&IntMessage::new(150)).unwrap();
-    cumsum2.send(&IntMessage::new(56)).unwrap();
-
-    // WasmComponent test
-    let config_wasm = WasmComponentConfig {
-        name: "WasmComp".into(),
-        wasm_url: "https://github.com/extism/plugins/releases/latest/download/count_vowels.wasm".into(),
-        input_ports: vec![ InputPort { name: "count_vowels".into(), msg_type: Text } ],
-        output_ports: vec![],
-    };    
-    let wasm_component = WasmComponent::new(config_wasm); 
-
-    // Ping Pong WasmComponent
-    let config_pingpong = WasmComponentConfig {
-        name: "PingPong".into(),
-        wasm_url: "component_artifacts/ping_pong_c.wasm".into(),
-        input_ports: vec![ InputPort { name: "ping".into(), msg_type: Text } ],
-        output_ports: vec![ OutputPort { name: "pong".into(), msg_type: Text } ],
-    };    
-    let mut pingpong_component = WasmComponent::new(config_pingpong);
-
-    // Printer component to display the plugin's output
-    let printer_cfg = TestComponentConfig { initial_sum: 0, greeting: "Printer".into() };
-    let mut printer = TestComponent::new(printer_cfg);
-
-    let printer_in: &mut dyn ConnectablePort<TextMessage> = printer.port_by_name_mut("print").unwrap();
-    
-    // Connect pingpong.output --> printer.print
-    let pong_out: &mut dyn ConnectablePort<TextMessage> =
-    pingpong_component.port_by_name_mut("pong").unwrap();
-    pong_out.connect_to(printer_in);
-
-    // Capture sender before starting the component
-    let wasm_input = wasm_component.port_by_name("count_vowels").unwrap().sender().clone();
-    let pingpong_input = pingpong_component.port_by_name("ping").unwrap().sender().clone();
-
-
-    // TempSensor component
-    let config_temp_sensor = WasmComponentConfig {
-        name: "TempSensor".into(),
-        wasm_url: "component_artifacts/sensor_temp.wasm".into(),
-        input_ports: vec![ InputPort { name: "i2c_in".into(), msg_type: Text } ],
-        output_ports: vec![ OutputPort { name: "i2c_out".into(), msg_type: Text } ],
-    };
-    let mut temp_sensor = WasmComponent::new(config_temp_sensor);
-
-    // Printer for TempSensor
-    let printer_cfg = TestComponentConfig { initial_sum: 0, greeting: "TempPrinter".into() };
-    let mut temp_printer = TestComponent::new(printer_cfg);
-
-    // Connect TempSensor output to printer input
-    let printer_in: &mut dyn ConnectablePort<TextMessage> = temp_printer.port_by_name_mut("print").unwrap();
-    let i2c_out_port: &mut dyn ConnectablePort<TextMessage> = temp_sensor.port_by_name_mut("i2c_out").unwrap();
-    i2c_out_port.connect_to(printer_in);
-
-    // Capture sender before starting the component
-    let temp_input = temp_sensor.port_by_name("i2c_in").unwrap().sender().clone();
-
-    // Start components
+    // Start component
+    let start = Instant::now();
     let monitor1 = test1.start().unwrap();
     let monitor2 = test2.start().unwrap();
-    let monitor_printer = printer.start().unwrap();
-    let monitor_wasm = wasm_component.start().unwrap();
-    let monitor_pingpong = pingpong_component.start().unwrap();
-    let monitor_temp_sensor = temp_sensor.start().unwrap();
-    let monitor_temp_printer = temp_printer.start().unwrap();
+    // let monitor_printer = printer.start().unwrap();
+    // let monitor_wasm = wasm_component.start().unwrap();
+    // let monitor_pingpong = pingpong_component.start().unwrap();
+    // let monitor_temp_sensor = temp_sensor.start().unwrap();
+    // let monitor_temp_printer = temp_printer.start().unwrap();
 
-    // Send message to PingPong plugin
-    wasm_input.send(TextMessage::new("Hello Hola")).unwrap();
-    pingpong_input.send(TextMessage::new("ping")).unwrap();
+    // Wait for components to start and handle messages
+    sleep(Duration::from_millis(100));
 
-    // Send messages to the TempSensor plugin
-    let msg = serde_json::json!({
-        "address": 0x48,
-        "data": [0],
-        "len": 0,
-        "read": false
-    }).to_string();
-    temp_input.send(TextMessage::new(&msg)).unwrap();
+    // Play around reading logs and final status :)
+    fn format_log_entry(entry: &LogEntry, start: Instant) -> String {
+        let elapsed = entry.timestamp.duration_since(start);
 
-    let msg = serde_json::json!({
-        "address": 0x48,
-        "data": [],
-        "len": 2,
-        "read": true
-    }).to_string();
-    temp_input.send(TextMessage::new(&msg)).unwrap();
+        let total_secs = elapsed.as_secs();
+        let hours = total_secs / 3600;
+        let minutes = (total_secs % 3600) / 60;
+        let seconds = total_secs % 60;
+        let millis = elapsed.subsec_millis();
 
-    sleep(Duration::from_millis(300));
+        let time = format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis);
 
+        format!("{}: [{:?}] {}", time, entry.level, entry.message)
+    }
+
+    println!("\n====== TestComponent 1 ======");
+    println!("\nstatus: {}", serde_json::to_string_pretty(
+        &monitor1.status().unwrap()
+    ).unwrap());
+
+    println!("\nlogs:");
+    while let Ok(entry) = monitor1.log_receiver().try_recv() {
+        println!("{}", format_log_entry(&entry, start));
+    }
+
+    println!("\n====== TestComponent 2 ======");
+    println!("\nstatus: {}", serde_json::to_string_pretty(
+        &monitor2.status().unwrap()
+    ).unwrap());
+
+    println!("\nlogs:");
+    while let Ok(entry) = monitor2.log_receiver().try_recv() {
+        println!("{}", format_log_entry(&entry, start));
+    }
+
+    // Stop the components
     monitor1.stop().unwrap();
     monitor2.stop().unwrap();
-    monitor_printer.stop().unwrap();
-    monitor_wasm.stop().unwrap();
-    monitor_pingpong.stop().unwrap();
-    monitor_temp_sensor.stop().unwrap();
-    monitor_temp_printer.stop().unwrap();
+    // monitor_printer.stop().unwrap();
+    // monitor_wasm.stop().unwrap();
+    // monitor_pingpong.stop().unwrap();
+    // monitor_temp_sensor.stop().unwrap();
+    // monitor_temp_printer.stop().unwrap();
 }

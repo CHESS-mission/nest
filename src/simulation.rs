@@ -1,14 +1,14 @@
-use std::{collections::HashMap, thread};
+use std::collections::HashMap;
 
 use crate::component::Component;
 
 pub struct Simulation {
-    topology: HashMap<String, Box<dyn Component>>,
+    _topology: HashMap<String, Box<dyn Component>>,
 }
 
 impl Simulation {
     pub fn new() -> Self {
-        Self { topology: HashMap::new() }
+        Self { _topology: HashMap::new() }
     }
 
     pub fn run_topology(&mut self) {

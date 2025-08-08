@@ -50,6 +50,11 @@ fn main() {
     let start = Instant::now();
     let monitor1 = test1.start().unwrap();
     let monitor2 = test2.start().unwrap();
+    // let monitor_printer = printer.start().unwrap();
+    // let monitor_wasm = wasm_component.start().unwrap();
+    // let monitor_pingpong = pingpong_component.start().unwrap();
+    // let monitor_temp_sensor = temp_sensor.start().unwrap();
+    // let monitor_temp_printer = temp_printer.start().unwrap();
 
     // Wait for components to start and handle messages
     sleep(Duration::from_millis(100));
@@ -92,4 +97,9 @@ fn main() {
     // Stop the components
     monitor1.stop().unwrap();
     monitor2.stop().unwrap();
+    // monitor_printer.stop().unwrap();
+    // monitor_wasm.stop().unwrap();
+    // monitor_pingpong.stop().unwrap();
+    // monitor_temp_sensor.stop().unwrap();
+    // monitor_temp_printer.stop().unwrap();
 }

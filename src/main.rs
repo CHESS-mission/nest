@@ -52,7 +52,7 @@ fn main() {
     let monitor1 = test1.start().unwrap();
     let monitor2 = test2.start().unwrap();
     
-    // ========== WASM component (new architecture) ==========
+    // ========== WASM component ==========
     // Prepare params
     let mut wasm_params = ComponentParams::new();
     wasm_params.add_config_entry("wasm.module", "component_artifacts/ping_pong_c.wasm");
@@ -80,8 +80,45 @@ fn main() {
     // Send a sample message to the WASM component
     wasm_in_src.send(&TextMessage::new("hello from host")).unwrap();
 
-    // Wait for components to start and handle messages
-    sleep(Duration::from_millis(100));
+    // ========== Temp Sensor WASM component ==========
+    let mut temp_params = ComponentParams::new();
+    temp_params.add_config_entry("wasm.module", "component_artifacts/sensor_temp.wasm");
+    temp_params.add_config_entry("wasm.exports.i2c_in", "i2c_in");
+    temp_params.add_config_entry("wasm.imports.i2c_out", "i2c_out");
+
+    temp_params.add_system_port("i2c_in", GenericSystemPort::Text(SystemPort::default()));
+    temp_params.add_system_port("i2c_out", GenericSystemPort::Text(SystemPort::default()));
+
+    // External source to temp sensor input
+    let mut temp_in_src = SystemPort::<TextMessage>::default();
+    let temp_in_port = temp_params.system_port_mut("i2c_in").unwrap().as_text_mut().unwrap();
+    temp_in_src.connect_to(temp_in_port);
+
+    let temp_sensor_component = WasmComponent::from_params(&temp_params).unwrap();
+    let monitor_temp = temp_sensor_component.start().unwrap();
+
+    // Give the temp sensor plugin time to init before sending
+    sleep(Duration::from_millis(150));
+
+    // Send messages to the TempSensor plugin
+    let msg = serde_json::json!({
+        "address": 0x48,
+        "data": [0],
+        "len": 0,
+        "read": false
+    }).to_string();
+    temp_in_src.send(&TextMessage::new(&msg)).unwrap();
+
+    let msg = serde_json::json!({
+        "address": 0x48,
+        "data": [],
+        "len": 2,
+        "read": true
+    }).to_string();
+    temp_in_src.send(&TextMessage::new(&msg)).unwrap();
+
+    // Wait some more
+    sleep(Duration::from_millis(700));
 
     // Play around reading logs and final status :)
     fn format_log_entry(entry: &LogEntry, start: Instant) -> String {
@@ -128,8 +165,19 @@ fn main() {
         println!("{}", format_log_entry(&entry, start));
     }
 
+    println!("\n====== TempSensor WasmComponent ======");
+    println!("\nstatus: {}", serde_json::to_string_pretty(
+        &monitor_temp.status().unwrap()
+    ).unwrap());
+
+    println!("\nlogs:");
+    while let Ok(entry) = monitor_temp.log_receiver().try_recv() {
+        println!("{}", format_log_entry(&entry, start));
+    }
+
     // Stop the components
     monitor1.stop().unwrap();
     monitor2.stop().unwrap();
     monitor_wasm.stop().unwrap();
+    monitor_temp.stop().unwrap();
 }

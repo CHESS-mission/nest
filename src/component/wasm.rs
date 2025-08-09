@@ -21,13 +21,13 @@ pub struct WasmComponentConfig {
     /// - "exports" are functions implemented and exposed by the plugin (wasm module)
     /// - the host calls these when receiving messages on input ports
     /// - config: wasm.exports.<in_port> = <export_fn>
-    ///   e.g., wasm.exports.cmd = handle_command  => host calls plugin export "handle_command" on messages arriving on port "cmd"
+    /// - example: wasm.exports.cmd = handle_command  => host calls plugin export "handle_command" on messages arriving on port "cmd"
     pub exports: HashMap<String, String>,
     /// Multi-port import mapping (plugin perspective):
     /// - "imports" are functions the plugin expects the host to provide (env::<name>)
     /// - when the plugin calls such an import, the host implementation emits a Text message on the mapped output port
     /// - config: wasm.imports.<out_port> = <import_fn>
-    ///   e.g., wasm.imports.log = log  => host exposes env::log and forwards calls to output port "log"
+    /// - example: wasm.imports.log = log  => host exposes env::log and forwards calls to output port "log"
     pub imports: HashMap<String, String>,
 }
 

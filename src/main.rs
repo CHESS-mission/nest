@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use nest::component::test::TestComponentConfig;
 use nest::component::{Component, LogEntry};
 use nest::component::{test::TestComponent, ComponentParams};
+use nest::component::wasm::WasmComponent;
 use nest::ports::{GenericSystemPort, IntMessage, SystemPort, TextMessage};
 
 fn main() {
@@ -50,11 +51,34 @@ fn main() {
     let start = Instant::now();
     let monitor1 = test1.start().unwrap();
     let monitor2 = test2.start().unwrap();
-    // let monitor_printer = printer.start().unwrap();
-    // let monitor_wasm = wasm_component.start().unwrap();
-    // let monitor_pingpong = pingpong_component.start().unwrap();
-    // let monitor_temp_sensor = temp_sensor.start().unwrap();
-    // let monitor_temp_printer = temp_printer.start().unwrap();
+    
+    // ========== WASM component (new architecture) ==========
+    // Prepare params
+    let mut wasm_params = ComponentParams::new();
+    wasm_params.add_config_entry("wasm.module", "component_artifacts/ping_pong_c.wasm");
+    wasm_params.add_config_entry("wasm.exports.in", "ping");
+
+    wasm_params.add_system_port("in", GenericSystemPort::Text(SystemPort::default()));
+    wasm_params.add_system_port("out", GenericSystemPort::Text(SystemPort::default()));
+
+    // Wire external source to the component ports
+    let mut wasm_in_src = SystemPort::<TextMessage>::default();
+    let wasm_in_port = wasm_params.system_port_mut("in").unwrap().as_text_mut().unwrap();
+    wasm_in_src.connect_to(wasm_in_port);
+
+    // Bind host import env::pong -> out port (visible in logs)
+    wasm_params.add_config_entry("wasm.imports.out", "pong");
+
+    let wasm_out_sink = SystemPort::<TextMessage>::default();
+    let wasm_out_port = wasm_params.system_port_mut("out").unwrap().as_text_mut().unwrap();
+    wasm_out_port.connect_to(&wasm_out_sink);
+
+    // Instantiate and start
+    let wasm_component = WasmComponent::from_params(&wasm_params).unwrap();
+    let monitor_wasm = wasm_component.start().unwrap();
+
+    // Send a sample message to the WASM component
+    wasm_in_src.send(&TextMessage::new("hello from host")).unwrap();
 
     // Wait for components to start and handle messages
     sleep(Duration::from_millis(100));
@@ -94,12 +118,18 @@ fn main() {
         println!("{}", format_log_entry(&entry, start));
     }
 
+    println!("\n====== WasmComponent ======");
+    println!("\nstatus: {}", serde_json::to_string_pretty(
+        &monitor_wasm.status().unwrap()
+    ).unwrap());
+
+    println!("\nlogs:");
+    while let Ok(entry) = monitor_wasm.log_receiver().try_recv() {
+        println!("{}", format_log_entry(&entry, start));
+    }
+
     // Stop the components
     monitor1.stop().unwrap();
     monitor2.stop().unwrap();
-    // monitor_printer.stop().unwrap();
-    // monitor_wasm.stop().unwrap();
-    // monitor_pingpong.stop().unwrap();
-    // monitor_temp_sensor.stop().unwrap();
-    // monitor_temp_printer.stop().unwrap();
+    monitor_wasm.stop().unwrap();
 }

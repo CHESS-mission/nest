@@ -1,321 +1,216 @@
-use anyhow::Result;
-use extism::{Manifest, Plugin, Wasm, PluginBuilder, UserData};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    thread,
+use anyhow::{bail, Result};
+use std::collections::HashMap;
+use serde_json::json;
+use extism::{Manifest, Plugin, PluginBuilder, Wasm, ValType, CurrentPlugin, Val, UserData};
+
+use crate::{
+    component::{ComponentParams, HandlerStatus, MessageDispatcher, Logger},
+    ports::{SystemPort, TextMessage},
+    set_status,
 };
-use extism::ValType;
 
-use crossbeam_channel::{unbounded, Receiver, Select};
-
-use super::{BoolMessage, BytesMessage, Component, ComponentMonitor, ConnectablePort, FloatMessage, HasPortType, IntMessage, JsonMessage, ManagedSystemPort, MonitorCommand, PortQueueCapacity, SystemPort, TextMessage};
-
-// This module implements the NEST WASM component.
-// Each component runs its own main loop in a thread, manages its own plugin instance and ports locally.
-
-#[derive(Clone)]
-pub enum MessageType {
-    Int,
-    Float,
-    Bool,
-    Bytes,
-    Text,
-    Json,
-}
-
-#[derive(Clone)]
-pub struct InputPort {
-    pub name: String,
-    pub msg_type: MessageType,
-}
-
-#[derive(Clone)]
-pub struct OutputPort {
-    pub name: String,
-    pub msg_type: MessageType,
-}
-
-// Context passed to host functions so they know which output port triggered the call.
-struct OutCtx {
-    port_name: String,
-}
-
-// Convert MessageType NEST to ValType Extism
-fn message_type_to_valtype(msg_type: &MessageType) -> ValType {
-    match msg_type {
-        MessageType::Int => ValType::I64,
-        MessageType::Float => ValType::F64,
-        MessageType::Bool => ValType::I64,
-        MessageType::Bytes => ValType::I64,
-        MessageType::Text => ValType::I64,
-        MessageType::Json => ValType::I64,
-    }
-}
-
-// Shared host function handler for all *_out() WASM calls.
-// Decodes the argument, tries to read it as a string, then as bytes if not valid.
-fn common_out(
-    plugin: &mut extism::CurrentPlugin,
-    vals: &[extism::Val],
-    rets: &mut [extism::Val],
-    ctx: UserData<OutCtx>,
-) -> Result<(), extism::Error> {
-    let name = ctx.get()?.lock().unwrap().port_name.clone();
-
-    if vals.is_empty() {
-        println!("[wasm] OUT {}: <no argument>", name);
-        return Ok(());
-    }
-
-    let offset = match vals[0] {
-        extism::Val::I64(n) => n as u64,
-        _ => {
-            println!("[wasm] OUT {}: <unexpected argument type>", name);
-            return Ok(());
-        }
-    };
-
-    if let Some(handle) = plugin.memory_handle(offset) {
-        // Try reading as a string
-        match plugin.memory_str(handle) {
-            Ok(s) => println!("[wasm] OUT {}: \"{}\"", name, s),
-            Err(_) => {
-                // Fallback: try as bytes
-                match plugin.memory_bytes(handle) {
-                    Ok(bytes) => println!("[wasm] OUT {}: {:?}", name, bytes),
-                    Err(e) => println!("[wasm] OUT {}: <failed to read memory: {}>", name, e),
-                }
-            }
-        }
-    } else {
-        println!("[wasm] OUT {}: <invalid offset {}>", name, offset);
-    }
-
-    // Set return value to 0 to indicate success
-    if !rets.is_empty() {
-        rets[0] = extism::Val::I64(0);
-    }
-    Ok(())
-}
+use super::{Component, ComponentMonitor, MonitorCommand};
 
 // Config
 
+#[derive(Clone, Debug, Default)]
 pub struct WasmComponentConfig {
-    pub name: String,
-    pub wasm_url: String,
-    pub input_ports: Vec<InputPort>,
-    pub output_ports: Vec<OutputPort>,
+    /// Path or URL to the WASM module (wasm.module)
+    pub module: String,
+    /// Multi-port export mapping (plugin perspective):
+    /// - "exports" are functions implemented and exposed by the plugin (wasm module)
+    /// - the host calls these when receiving messages on input ports
+    /// - config: wasm.exports.<in_port> = <export_fn>
+    ///   e.g., wasm.exports.cmd = handle_command  => host calls plugin export "handle_command" on messages arriving on port "cmd"
+    pub exports: HashMap<String, String>,
+    /// Multi-port import mapping (plugin perspective):
+    /// - "imports" are functions the plugin expects the host to provide (env::<name>)
+    /// - when the plugin calls such an import, the host implementation emits a Text message on the mapped output port
+    /// - config: wasm.imports.<out_port> = <import_fn>
+    ///   e.g., wasm.imports.log = log  => host exposes env::log and forwards calls to output port "log"
+    pub imports: HashMap<String, String>,
 }
 
+// State used by the dispatcher
 
+#[derive(Debug)]
 struct WasmComponentState {
-    plugin: Plugin, // Extism plugin instance, containing the WASM module and its state
-}
-
-enum GenericSystemPort {
-    Int(SystemPort<WasmComponent, WasmComponentState, IntMessage>),
-    Float(SystemPort<WasmComponent, WasmComponentState, FloatMessage>),
-    Bool(SystemPort<WasmComponent, WasmComponentState, BoolMessage>),
-    Bytes(SystemPort<WasmComponent, WasmComponentState, BytesMessage>),
-    Text(SystemPort<WasmComponent, WasmComponentState, TextMessage>),
-    Json(SystemPort<WasmComponent, WasmComponentState, JsonMessage>),
+    pub plugin: Plugin,
+    pub update_status: bool,
 }
 
 // Component
 
+#[derive(Default)]
 pub struct WasmComponent {
-    ports: HashMap<String, GenericSystemPort>,
-    input_ports: Vec<InputPort>,
-    wasm_url: String,
-    output_ports: Vec<OutputPort>,
+    config: WasmComponentConfig,
+    in_ports: HashMap<String, SystemPort<TextMessage>>,   // input ports (mapped by wasm.exports.*)
+    out_ports: HashMap<String, SystemPort<TextMessage>>,  // output ports (mapped by wasm.imports.*)
 }
 
-impl WasmComponent {
-    // Creates the SystemPorts for all input/output ports declared in the config.
-    // Each input port corresponds to an exported (relative to plugin) WASM function (e.g. i2c_in), called when a message arrives on the Rust port.
-    pub fn new(config: WasmComponentConfig) -> Self {
-        let wasm_url = config.wasm_url.clone();
-        let input_ports = config.input_ports.clone();
-        let output_ports = config.output_ports.clone();
-
-        let mut ports = HashMap::new();
-
-        // INPUTS: one SystemPort per in export function from plugin
-        for ip in &input_ports {
-            let fn_name = format!("{}", ip.name);
-            let label   = ip.name.clone();
-
-            // only handle TextMessage here
-            let port = SystemPort::new(
-                Box::new(move |comp: &WasmComponent, state: &mut WasmComponentState, msg: &TextMessage| {
-                    let res = state.plugin.call::<&str, &str>(&fn_name, &msg.data)?;
-                    println!("[wasm] {} → {}", label, res);
-
-                    // If a SystemPort with the same name exists on the Rust side, forward
-                    if let Some(out) = comp.port_by_name(&label) {
-                        out.send(&TextMessage::new(res))?; // let component respond when it wants
-                    }
-                    Ok(())
-                }),
-                PortQueueCapacity::Unbounded,
-            );
-
-            ports.insert(ip.name.clone(), GenericSystemPort::Text(port));
-        }
-
-        // OUTPUTS
-        for op in &output_ports {
-            let lbl = op.name.clone();
-            let port = SystemPort::new(
-                Box::new(move |_comp, _st, msg: &TextMessage| {
-                            println!("[sim] {} OUT (loopback): {}", lbl, msg.data);
-                            Ok(())
-                        }),
-                PortQueueCapacity::Unbounded,
-            );
-            ports.insert(op.name.clone(), GenericSystemPort::Text(port));
-        }
-
-        Self {
-            ports,
-            input_ports,
-            wasm_url,
-            output_ports,
-        }
-    }
-
-
-    fn loop_recv_dispatch(&self, state: &mut WasmComponentState, observable_state: &Arc<Mutex<String>>, monitor_rx: &Receiver<MonitorCommand>) -> Result<()> {
-        let mut sel = Select::new();
-
-        // Register monitor rx at index 0
-        sel.recv(monitor_rx);
-
-        // Register all ports
-        let ports: Vec<_> = self.ports.values().collect();
-        for port in &ports {
-            Self::generic_to_managed(port).register(&mut sel);
-        }
-
-        let mut update_observable_state = false;
-
-        loop {
-            // Wait until a receive operation becomes ready and try executing it.
-            let index = sel.ready();
-
-            if index == 0 {
-                // Handle monitor command
-                match monitor_rx.recv()? {
-                    MonitorCommand::Stop => return Ok(()),
-                    MonitorCommand::StartObservableStateUpdates => update_observable_state = true,
-                    MonitorCommand::StopObservableStateUpdates => update_observable_state = false,
-                }
-            } else {
-                // Dispatch to port
-                Self::generic_to_managed(&ports[index - 1]).recv(self, state)?;
-            }
-
-            if update_observable_state {
-                *observable_state.lock().unwrap() = "running".into();
-            }
-        }
-    }
-
-    fn generic_to_managed(gen_port: &GenericSystemPort) -> &(dyn ManagedSystemPort<Self, WasmComponentState>) {
-        match gen_port {
-            GenericSystemPort::Int(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
-            GenericSystemPort::Float(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
-            GenericSystemPort::Bool(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
-            GenericSystemPort::Bytes(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
-            GenericSystemPort::Text(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
-            GenericSystemPort::Json(port) => port as &dyn ManagedSystemPort<Self, WasmComponentState>,
-        }
-    }
-}
-
+impl WasmComponent {}
 
 impl Component for WasmComponent {
-    // Extism plugin is built in-thread and stored in the state.
     fn start(self) -> Result<ComponentMonitor> {
-        let (tx, rx) = unbounded();
-        let observable_state = Arc::new(Mutex::new(String::new()));
-        let observable_state_clone = observable_state.clone();
+    let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, status| {
+            // Initialize status
+            set_status!(status.wasm, json!({
+                "module": self.config.module,
+                "exports": self.config.exports,
+                "imports": self.config.imports,
+            }))?;
 
-        let wasm_url = self.wasm_url.clone();
-        let output_ports = self.output_ports.clone();
+            // Announce start
+            logger.info("WASM component starting")?;
 
-        let ports = self.ports;
-        let input_ports = self.input_ports.clone();
-
-        let handle = thread::spawn(move || {
-            let url = if wasm_url.starts_with("http") {
-                Wasm::url(&wasm_url)
+            // Build the Extism plugin (lives in state)
+            let wasm_src = if self.config.module.starts_with("http://") || self.config.module.starts_with("https://") {
+                Wasm::url(&self.config.module)
             } else {
-                Wasm::file(&wasm_url)
+                Wasm::file(&self.config.module)
             };
-            let manifest = Manifest::new([url]);
-            let mut builder = PluginBuilder::new(manifest).with_wasi(true);
+            let manifest = Manifest::new([wasm_src]);
+            // Host import: expose env::<name> (plugin import) that emits Text to the mapped out_port
+            #[derive(Clone)]
+            struct HostCtx { logger: Logger, out_port: SystemPort<TextMessage>, import_name: String }
 
-            for op in &output_ports {
-                let valtype = message_type_to_valtype(&op.msg_type);
-                builder = builder.with_function_in_namespace(
-                    "env",
-                    &op.name,
-                    [valtype.clone()],
-                    [valtype],
-                    UserData::new(OutCtx { port_name: op.name.clone() }),
-                    common_out,
-                );
+            fn host_emit(plugin: &mut CurrentPlugin, vals: &[Val], rets: &mut [Val], ctx: UserData<HostCtx>) -> std::result::Result<(), extism::Error> {
+                let ctx_arc = ctx.get()?;
+                let ctx_guard = ctx_arc.lock().unwrap();
+                let logger = ctx_guard.logger.clone();
+                let out_port = ctx_guard.out_port.clone();
+                let import = ctx_guard.import_name.clone();
+                // Expect a single I64 argument: offset to memory (string)
+                let s = if let Some(Val::I64(off)) = vals.get(0) {
+                    if let Some(handle) = plugin.memory_handle(*off as u64) {
+                        plugin.memory_str(handle).unwrap_or_default().to_string()
+                    } else { String::new() }
+                } else { String::new() };
+                // Log and forward to out_port
+                let _ = logger.info(&format!("host env::{} -> \"{}\"", import, s));
+                let _ = out_port.send(&TextMessage::new(&s));
+                if let Some(r0) = rets.get_mut(0) { *r0 = Val::I64(0); }
+                Ok(())
             }
 
-            let plugin = builder.build().unwrap();
-            let mut state = WasmComponentState { plugin };
-            let comp = WasmComponent {
-                ports,
-                input_ports,
-                wasm_url,
-                output_ports,
+            let mut builder = PluginBuilder::new(manifest).with_wasi(true);
+            // Register configured host imports: env::<function> routed to the mapped out port
+            for (out_port_name, import_fn) in &self.config.imports {
+                if let Some(out_port) = self.out_ports.get(out_port_name) {
+                    let host_ctx = HostCtx { logger: logger.clone(), out_port: out_port.clone(), import_name: import_fn.clone() };
+                    builder = builder.with_function_in_namespace("env", import_fn, [ValType::I64], [ValType::I64], UserData::new(host_ctx), host_emit);
+                } else {
+                    logger.warning(&format!("configured import '{}' has no matching out port '{}'", import_fn, out_port_name))?;
+                }
+            }
+
+            let plugin = match builder.build() {
+                Ok(p) => p,
+                Err(e) => {
+                    logger.error(&format!("failed to build WASM plugin: {}", e))?;
+                    return Ok(());
+                }
             };
-            comp.loop_recv_dispatch(&mut state, &observable_state, &rx)
+
+            let mut dispatcher = MessageDispatcher::<WasmComponentState>::new();
+
+            // Commands
+            dispatcher.register(command_receiver, Box::new(|msg, state| {
+                match msg {
+                    MonitorCommand::Stop => {
+                        logger.info("Stopping WASM component")?;
+                        return Ok(HandlerStatus::Stop);
+                    }
+                    MonitorCommand::StartStatusUpdates => {
+                        logger.info("Starting status updates")?;
+                        state.update_status = true;
+                    }
+                    MonitorCommand::StopStatusUpdates => {
+                        logger.info("Stopping status updates")?;
+                        state.update_status = false;
+                    }
+                }
+                Ok(HandlerStatus::Ok)
+            }));
+
+            // Resolve export mapping (multi-port)
+            let mut exports_map: HashMap<String, String> = self.config.exports.clone();
+
+            // Register input handlers for each mapped in port
+            for (in_name, export_fn) in exports_map.drain() {
+                if let Some(in_port) = self.in_ports.get(&in_name) {
+                    let logger_in = logger.clone();
+                    let export_name_clone = export_fn.clone();
+                    let in_name_clone = in_name.clone();
+                    let status_for_in = status.clone();
+                    dispatcher.register_system_port(in_port, Box::new(move |msg, state| {
+                        logger_in.info(&format!("[{}] received input: \"{}\"", in_name_clone, msg.data))?;
+
+                        match state.plugin.call::<&str, String>(&export_name_clone, &msg.data) {
+                            Ok(result) => {
+                                if state.update_status {
+                                    if let Ok(mut s) = status_for_in.lock() {
+                                        let keys = vec!["last", in_name_clone.as_str()];
+                                        let v = crate::macros::_get_or_create_json_path_mut(&mut *s, &keys);
+                                        *v = json!({ "in": msg.data, "out": result });
+                                    }
+                                }
+                                logger_in.info(&format!("export '{}' completed; out=\"{}\"", export_name_clone, result))?;
+                            }
+                            Err(e) => { logger_in.error(&format!("export '{}' failed: {}", export_name_clone, e))?; }
+                        }
+                        Ok(HandlerStatus::Ok)
+                    }));
+                } else {
+                    logger.warning(&format!("configured export '{}' has no matching in port '{}'", export_fn, in_name))?;
+                }
+            }
+
+            // Also log content of each declared port when used for outputs
+            for (out_name, out_port) in self.out_ports.iter() {
+                let logger_out = logger.clone();
+                let out_name_clone = out_name.clone();
+                dispatcher.register_system_port(out_port, Box::new(move |msg, _state| {
+                    logger_out.info(&format!("[{}] wasm out -> {}", out_name_clone, msg.data))?;
+                    Ok(HandlerStatus::Ok)
+                }));
+            }
+
+            logger.info("WASM component ready")?;
+            dispatcher.start_dispatch(WasmComponentState { plugin, update_status: true })?;
+            Ok(())
         });
 
-        Ok(ComponentMonitor::new(handle, tx, observable_state_clone))
+        Ok(monitor)
     }
-}
 
-macro_rules! impl_has_port_type {
-    ( $enum_type:ident : $( $variant:ident => $msg_type:ty ),* $(,)? ) => {
-        $(
-            impl HasPortType<$msg_type> for WasmComponent {
-                fn port_by_name(&self, name: &str) -> Option<&dyn ConnectablePort<$msg_type>> {
-                    self.ports.get(name).and_then(|v|
-                        match v {
-                            $enum_type::$variant(port) => Some(port as &dyn ConnectablePort<$msg_type>),
-                            _ => None
-                        }
-                    )
-                }
+    fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
+        let mut comp = Self::default();
 
-                fn port_by_name_mut(&mut self, name: &str) -> Option<&mut dyn ConnectablePort<$msg_type>> {
-                    self.ports.get_mut(name).and_then(|v|
-                        match v {
-                            $enum_type::$variant(port) => Some(port as &mut dyn ConnectablePort<$msg_type>),
-                            _ => None
-                        }
-                    )
-                }
-            }
-        )*
-    };
-}
+    // Config (multi-port)
+        for (k, v) in &params.config {
+            if k == "wasm.module" { comp.config.module = v.clone(); continue; }
+            if let Some(p) = k.strip_prefix("wasm.exports.") { comp.config.exports.insert(p.to_string(), v.clone()); continue; }
+            if let Some(p) = k.strip_prefix("wasm.imports.") { comp.config.imports.insert(p.to_string(), v.clone()); continue; }
+            bail!("Unknown config parameter {} for WasmComponent", k);
+        }
 
-impl_has_port_type! {
-    GenericSystemPort:
-        Int => IntMessage,
-        Float => FloatMessage,
-        Bool => BoolMessage,
-        Bytes => BytesMessage,
-        Text => TextMessage,
-        Json => JsonMessage,
+        // Ports: populate input and output maps based on configured mappings
+        // Inputs
+        for in_name in comp.config.exports.keys() {
+            let gp = params.system_port(in_name).ok_or_else(|| anyhow::anyhow!(format!("Missing system port '{}' for wasm export", in_name)))?;
+            comp.in_ports.insert(in_name.clone(), gp.as_text()?.clone());
+        }
+
+        // Outputs
+        for out_name in comp.config.imports.keys() {
+            let gp = params.system_port(out_name).ok_or_else(|| anyhow::anyhow!(format!("Missing system port '{}' for wasm import", out_name)))?;
+            comp.out_ports.insert(out_name.clone(), gp.as_text()?.clone());
+        }
+
+    if comp.config.module.is_empty() { bail!("Missing required config 'wasm.module'"); }
+    if comp.config.exports.is_empty() { bail!("Missing export mapping: set 'wasm.exports.<in>=<fn>'"); }
+
+        Ok(comp)
+    }
 }

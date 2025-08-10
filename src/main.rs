@@ -26,8 +26,18 @@ fn format_log_entry(entry: &LogEntry, start: Instant) -> String {
 
 fn main() {
     // Create and connect ports
+    let mut qemu_gpio5_port: SystemPort<JsonMessage> = SystemPort::default();
+    let mut qemu_gpio7_port: SystemPort<JsonMessage> = SystemPort::default();
+    let mut test_gpio0_port: SystemPort<JsonMessage> = SystemPort::default();
+    let mut test_gpio1_port: SystemPort<JsonMessage> = SystemPort::default();
+
     let mut qemu_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
     let mut test_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
+
+    test_gpio0_port.connect_to(&qemu_gpio5_port);
+    qemu_gpio5_port.connect_to(&test_gpio0_port);
+    test_gpio1_port.connect_to(&qemu_gpio7_port);
+    qemu_gpio7_port.connect_to(&test_gpio1_port);
 
     qemu_i2c_port.connect_to(&test_i2c_port);
     test_i2c_port.connect_to(&qemu_i2c_port);
@@ -38,7 +48,6 @@ fn main() {
     qemu_params.set_config(json!({
         "arch": "arm",
         "mem_mb": 1024,
-        "i2c_timeout_ms": 50,
         "options": [
             { "option": "cpu", "value": "cortex-a7" },
             { "option": "M", "value": "virt" },
@@ -48,9 +57,17 @@ fn main() {
             { "option": "device", "value": "virtio-blk-device,drive=hd0" },
             { "option": "serial", "value": "mon:stdio" },
             { "option": "nographic" },
-        ]
+        ],
+        "i2c_timeout_ms": 50,
+        "ngpio": 24,
+        "gpio_names": {
+            "5": "echo_out",
+            "7": "echo_in",
+        },
     }));
 
+    qemu_params.add_system_port("gpio5", GenericSystemPort::Json(qemu_gpio5_port));
+    qemu_params.add_system_port("gpio7", GenericSystemPort::Json(qemu_gpio7_port));
     qemu_params.add_system_port("i2c", GenericSystemPort::Json(qemu_i2c_port));
 
     let qemu = QemuComponent::from_params(&qemu_params).unwrap();
@@ -64,6 +81,8 @@ fn main() {
         test_config,
         SystemPort::default(),
         SystemPort::default(),
+        test_gpio0_port,
+        test_gpio1_port,
         test_i2c_port,
     );
 

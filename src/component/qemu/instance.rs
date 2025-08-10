@@ -42,6 +42,7 @@ pub struct QemuConfig {
     pub arch: String,
     pub memory_mb: u32,
     extra_args: Vec<QemuArg>,
+    gpio_backend_socket: Option<PathBuf>,
     i2c_backend_socket: Option<PathBuf>,
     qmp_socket_path: PathBuf,
 }
@@ -55,6 +56,7 @@ impl QemuConfig {
             arch,
             memory_mb,
             extra_args: Vec::new(),
+            gpio_backend_socket: None,
             i2c_backend_socket: None,
             qmp_socket_path,
         }
@@ -68,6 +70,11 @@ impl QemuConfig {
     /// Add a command-line flag.
     pub fn add_flag<S: Into<String>>(&mut self, flag: S) {
         self.extra_args.push(QemuArg::Flag(flag.into()));
+    }
+
+    /// Enable communication with the vhost-user gpio backend.
+    pub fn set_gpio_backend_socket<P: Into<PathBuf>>(&mut self, socket: P) {
+        self.gpio_backend_socket = Some(socket.into());
     }
 
     /// Enable communication with the vhost-user i2c backend.
@@ -117,6 +124,13 @@ impl QemuInstance {
         let mem_backend_file_arg = format!("memory-backend-file,id=mem,size={}M,mem-path=/dev/shm,share=on", config.memory_mb);
         cmd.arg("-object").arg(mem_backend_file_arg);
         cmd.arg("-numa").arg("node,memdev=mem");
+
+        // Configure vhost-user gpio
+        if let Some(socket) = &config.gpio_backend_socket {
+            let chardev_arg = format!("socket,path={},id=vgpio", socket.display());
+            cmd.arg("-chardev").arg(chardev_arg);
+            cmd.arg("-device").arg("vhost-user-gpio-pci,chardev=vgpio,id=gpio");
+        }
 
         // Configure vhost-user i2c
         if let Some(socket) = &config.i2c_backend_socket {

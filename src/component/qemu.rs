@@ -1,23 +1,29 @@
 mod instance;
+mod gpio;
 mod i2c;
 
 // Re-exports
 pub use crate::component::qemu::i2c::messaging::*;
 
-use std::{path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use anyhow::{Result, bail};
-use serde::Deserialize;
+use anyhow::{anyhow, bail, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     component::{
         qemu::{
-            i2c::{start_i2c_backend},
-            instance::{QemuConfig, QemuInstance},
+            gpio::{messaging::GpioEvent, start_gpio_backend, GpioLine}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}
         }, Component, ComponentMonitor, ComponentParams, HandlerStatus, MessageDispatcher, MonitorCommand
     },
     ports::{JsonMessage, SystemPort},
 };
+
+#[derive(Serialize, Deserialize)]
+pub enum GpioValue {
+    Low,
+    High,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,25 +39,22 @@ pub struct QemuComponentConfig {
     mem_mb: u32,
     #[serde(default)]
     pub options: Vec<QemuComponentConfigOption>,
+    pub gpio_socket: Option<String>,
+    #[serde(default = "default_ngpio")]
+    pub ngpio: u32,
+    #[serde(default)]
+    pub gpio_names: HashMap<String, String>,
+    pub i2c_socket: Option<String>,
     #[serde(default = "default_i2c_timeout_ms")]
     pub i2c_timeout_ms: u64,
-    pub i2c_socket: Option<String>,
+}
+
+fn default_ngpio() -> u32 {
+    32
 }
 
 fn default_i2c_timeout_ms() -> u64 {
     100
-}
-
-impl Default for QemuComponentConfig {
-    fn default() -> Self {
-        QemuComponentConfig {
-            arch: "arm".into(),
-            mem_mb: 1024,
-            options: Vec::new(),
-            i2c_timeout_ms: default_i2c_timeout_ms(),
-            i2c_socket: None,
-        }
-    }
 }
 
 pub struct QemuComponentState {
@@ -65,20 +68,37 @@ impl QemuComponentState {
     }
 }
 
-#[derive(Default)]
 pub struct QemuComponent {
     config: QemuComponentConfig,
+    gpio_lines: Vec<GpioLine>,
+    gpio_ports: Vec<SystemPort<JsonMessage>>,
     i2c_port: SystemPort<JsonMessage>,
 }
 
 impl QemuComponent {
-    pub fn new(config: QemuComponentConfig, i2c_port: SystemPort<JsonMessage>) -> Self {
-        Self { config, i2c_port }
+    pub fn new(config: QemuComponentConfig, gpio_ports: Vec<SystemPort<JsonMessage>>, i2c_port: SystemPort<JsonMessage>) -> Result<Self> {
+        let mut gpio_lines = vec![GpioLine::default(); config.ngpio as usize];
+        for (i, name) in &config.gpio_names {
+            let idx: usize = i.parse()?;
+            gpio_lines.get_mut(idx)
+                .ok_or_else(|| anyhow!("Gpio index {} out of range 0-{}", idx, config.ngpio))?
+                .name = Some(name.clone());
+        }
+
+        Ok(Self { config, gpio_lines, gpio_ports, i2c_port })
     }
 }
 
 impl Component for QemuComponent {
     fn start(self) -> Result<ComponentMonitor> {
+        // Create gpio socket
+        let gpio_socket = self.config.gpio_socket.as_ref().map(PathBuf::from).unwrap_or_else(||
+            std::env::temp_dir().join(format!("vgpio-{}.sock", uuid::Uuid::new_v4()))
+        );
+
+        // Start gpio backend
+        let gpio_backend_handle = start_gpio_backend(&gpio_socket, self.gpio_lines);
+
         // Create i2c socket
         let i2c_socket = self.config.i2c_socket.as_ref().map(PathBuf::from).unwrap_or_else(||
             std::env::temp_dir().join(format!("vi2c-{}.sock", uuid::Uuid::new_v4()))
@@ -100,6 +120,44 @@ impl Component for QemuComponent {
 
                 Ok(HandlerStatus::Ok)
             }));
+
+            // Register gpio backend requests handler
+            dispatcher.register(gpio_backend_handle.events_rx, Box::new(|req, _state| {
+                let (line, value) = match req {
+                    GpioEvent::ValueLow(line) => (line, GpioValue::Low),
+                    GpioEvent::ValueHigh(line) => (line, GpioValue::High),
+                };
+
+                if let Some(port) = self.gpio_ports.get(line as usize) {
+                    port.send(&JsonMessage::new(serde_json::to_value(value)?))?;
+                } else {
+                    logger.error(&format!("GPIO line out of range: {}", line))?;
+                }
+                    
+
+                Ok(HandlerStatus::Ok)
+            }));
+
+            // Register gpio port handlers
+            for (i, gpio_port) in self.gpio_ports.iter().enumerate() {
+                let logger = &logger;
+                let gpio_backend_events_tx = &gpio_backend_handle.events_tx;
+                dispatcher.register_system_port(gpio_port, Box::new(move |msg, _state| {
+                    let gpio_value = serde_json::from_value::<GpioValue>(msg.data);
+
+                    if let Ok(value) = gpio_value {
+                        let event = match value {
+                            GpioValue::Low => GpioEvent::ValueLow(i as u16),
+                            GpioValue::High => GpioEvent::ValueHigh(i as u16),
+                        };
+                        gpio_backend_events_tx.send(event)?;
+                    } else {
+                        logger.error("Bad json received on gpio port")?;
+                    }
+
+                    Ok(HandlerStatus::Ok)
+                }));
+            }
 
             // Register i2c backend requests handler
             dispatcher.register(i2c_backend_handle.request_rx, Box::new(|req, _state| {
@@ -130,6 +188,9 @@ impl Component for QemuComponent {
                 }
             }
 
+            // Set gpio backend socket
+            qemu_config.set_gpio_backend_socket(gpio_socket);
+
             // Set i2c backend socket
             qemu_config.set_i2c_backend_socket(i2c_socket);
 
@@ -151,20 +212,35 @@ impl Component for QemuComponent {
     }
 
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
-        let mut qemu_component = Self::default();
-
         // Parse config parameters
-        qemu_component.config = serde_json::from_value::<QemuComponentConfig>(params.config().clone())?;
+        let config = serde_json::from_value::<QemuComponentConfig>(params.config().clone())?;
+
+        let mut gpio_ports = vec![SystemPort::default(); config.ngpio as usize];
+        let mut i2c_port = SystemPort::default();
 
         // Get system ports from params
         for (key, value) in &params.system_ports {
             match key.as_str() {
-                "i2c" => qemu_component.i2c_port = value.as_json()?.clone(),
-                _ => bail!("Unknown system port {} for QemuComponent", key),
+                "i2c" => i2c_port = value.as_json()?.clone(),
+                _ => {
+                    if let Some(i) = key.strip_prefix("gpio") {
+                        if let Ok(idx) = i.parse::<usize>() {
+                            if let Some(gpio_port) = gpio_ports.get_mut(idx) {
+                                *gpio_port = value.as_json()?.clone();
+                            } else {
+                                bail!("Gpio port {} out of range 0-{}", key, config.ngpio);
+                            }
+                        } else {
+                            bail!("Unknown system port {} for QemuComponent", key);
+                        }
+                    } else {
+                        bail!("Unknown system port {} for QemuComponent", key);
+                    }
+                },
             }
         }
 
         // Return the fully initialized component
-        Ok(qemu_component)
+        QemuComponent::new(config, gpio_ports, i2c_port)
     }
 }

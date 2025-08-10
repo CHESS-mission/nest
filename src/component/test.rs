@@ -1,8 +1,7 @@
 use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
 use crate::{
     component::{
-        ComponentParams, HandlerStatus, MessageDispatcher,
-        qemu::{I2cOperation, I2cRequest, I2cResponse},
+        qemu::{I2cOperation, I2cRequest, I2cResponse}, ComponentParams, HandlerStatus, MessageDispatcher
     },
     ports::{IntMessage, JsonMessage, TextMessage},
     set_status,
@@ -53,14 +52,20 @@ pub struct TestComponent {
     config: TestComponentConfig,
     cumsum_port: SystemPort<IntMessage>,
     print_port: SystemPort<TextMessage>,
+    gpio0_port: SystemPort<JsonMessage>,
+    gpio1_port: SystemPort<JsonMessage>,
     i2c_port: SystemPort<JsonMessage>,
 }
 
 impl TestComponent {
-    pub fn new(config: TestComponentConfig, cumsum_port: SystemPort<IntMessage>,
-               print_port: SystemPort<TextMessage>, i2c_port: SystemPort<JsonMessage>) -> Self
+    pub fn new(config: TestComponentConfig,
+        cumsum_port: SystemPort<IntMessage>,
+        print_port: SystemPort<TextMessage>,
+        gpio0_port: SystemPort<JsonMessage>,
+        gpio1_port: SystemPort<JsonMessage>,
+        i2c_port: SystemPort<JsonMessage>) -> Self
     {
-        Self { config, cumsum_port, print_port, i2c_port }
+        Self { config, cumsum_port, print_port, gpio0_port, gpio1_port, i2c_port }
     }
 }
 
@@ -129,6 +134,14 @@ impl Component for TestComponent {
                 Ok(HandlerStatus::Ok)
             }));
 
+            // Register gpio0 port handler
+            dispatcher.register_system_port(&self.gpio0_port, Box::new(|msg, _state| {
+                // Echo on gpio1
+                self.gpio1_port.send(&JsonMessage::new(msg.data))?;
+
+                Ok(HandlerStatus::Ok)
+            }));
+
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|msg, state| {
                 let request: I2cRequest = serde_json::from_value(msg.data).unwrap();
@@ -183,6 +196,8 @@ impl Component for TestComponent {
             match key.as_str() {
                 "cumsum" => test_component.cumsum_port = value.as_int()?.clone(),
                 "print" => test_component.print_port = value.as_text()?.clone(),
+                "gpio0" => test_component.gpio0_port = value.as_json()?.clone(),
+                "gpio1" => test_component.gpio1_port = value.as_json()?.clone(),
                 "i2c" => test_component.i2c_port = value.as_json()?.clone(),
                 _ => bail!("Unknown system port {} for TestComponent", key),
             }

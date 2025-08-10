@@ -79,16 +79,6 @@ impl convert::From<I2cError> for io::Error {
     }
 }
 
-/// A handle to the communication channels for the simulated I2C device.
-pub struct I2cBackendHandle {
-    /// Handle of the backend thread.
-    pub join_handle: JoinHandle<Result<()>>,
-    /// Receives requests from the guest.
-    pub request_rx: Receiver<I2cRequest>,
-    /// Sends responses back to the guest.
-    pub response_tx: Sender<I2cResponse>,
-}
-
 /// Represents the vhost-user I2C backend.
 pub struct VhostUserI2cBackend {
     event_idx: bool,
@@ -356,13 +346,22 @@ impl VhostUserBackendMut for VhostUserI2cBackend {
     }
 }
 
+/// A handle to the communication channels for the simulated I2C device.
+pub struct I2cBackendHandle {
+    /// Handle of the backend thread.
+    pub join_handle: JoinHandle<Result<()>>,
+    /// Receives requests from the guest.
+    pub request_rx: Receiver<I2cRequest>,
+    /// Sends responses back to the guest.
+    pub response_tx: Sender<I2cResponse>,
+}
+
 /// Start the vhost-user i2c backend daemon.
 pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration) -> I2cBackendHandle {
     let i2c_socket = i2c_socket.as_ref().to_owned();
     let (request_tx, request_rx) = unbounded();
     let (response_tx, response_rx) = unbounded();
 
-    // Future improvement: proper error handling
     let join_handle = spawn(move || {
         let backend = Arc::new(RwLock::new(
             VhostUserI2cBackend::new(request_tx, response_rx, timeout)?,

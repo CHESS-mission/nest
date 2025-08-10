@@ -8,9 +8,6 @@
 // Modifications made in 2025 by Nathan Felber
 // Adapted for use in NEST
 
-pub mod messaging;
-pub mod virtio;
-
 use std::{convert, io, path::Path, sync::{Arc, RwLock}, thread::{spawn, JoinHandle}, time::Duration};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -384,3 +381,83 @@ pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration) -> I2
         response_tx
     }
 }
+
+// Sub-module for messaging between the backend and the simulated device
+pub mod messaging {
+    use serde::{Deserialize, Serialize};
+
+    /// An I2C operation, part of a transfer.
+    #[derive(Debug, Clone)]
+    #[derive(Serialize, Deserialize)]
+    pub enum I2cOperation {
+        /// A write operation, containing the data to be written.
+        Write(Vec<u8>),
+        /// A read operation, indicating the number of bytes to read.
+        Read(usize),
+    }
+
+    /// A request sent from the [VhostUserI2cBackend] to the simulated device.
+    #[derive(Debug, Clone)]
+    #[derive(Serialize, Deserialize)]
+    pub struct I2cRequest {
+        /// The 7-bit I2C device address.
+        pub addr: u16,
+        /// The operation of this transaction.
+        pub op: I2cOperation,
+    }
+
+    impl I2cRequest {
+        pub fn is_read(&self) -> bool {
+            matches!(self.op, I2cOperation::Read(_))
+        }
+    }
+
+    /// A response sent from the simulated device back to the [VhostUserI2cBackend].
+    #[derive(Debug, Clone)]
+    #[derive(Serialize, Deserialize)]
+    pub enum I2cResponse {
+        /// A write response, acknowledging that the data has been written.
+        Write,
+        /// A read response, with the content read from the device.
+        Read(Vec<u8>),
+    }
+}
+
+// Sub-module for virtio specific structs and constants
+pub mod virtio {
+    use virtio_queue::DescriptorChain;
+    use vm_memory::{ByteValued, GuestMemoryLoadGuard, GuestMemoryMmap, Le16, Le32};
+
+    /// Virtio I2C Feature bits
+    pub const VIRTIO_I2C_F_ZERO_LENGTH_REQUEST: u16 = 0;
+
+    /// The final status written by the device
+    pub const VIRTIO_I2C_MSG_OK: u8 = 0;
+    pub const VIRTIO_I2C_MSG_ERR: u8 = 1;
+
+    #[derive(Copy, Clone, Default)]
+    #[repr(C)]
+    pub struct VirtioI2cOutHdr {
+        pub addr: Le16,
+        pub padding: Le16,
+        pub flags: Le32,
+    }
+    // SAFETY: The layout of the structure is fixed and can be initialized by
+    // reading its content from byte array.
+    unsafe impl ByteValued for VirtioI2cOutHdr {}
+
+    /// VirtioI2cOutHdr Flags
+    pub const VIRTIO_I2C_FLAGS_M_RD: u32 = 1 << 1;
+
+    #[derive(Copy, Clone, Default)]
+    #[repr(C)]
+    pub struct VirtioI2cInHdr {
+        pub status: u8,
+    }
+    // SAFETY: The layout of the structure is fixed and can be initialized by
+    // reading its content from byte array.
+    unsafe impl ByteValued for VirtioI2cInHdr {}
+
+    pub type I2cDescriptorChain = DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap<()>>>;
+}
+

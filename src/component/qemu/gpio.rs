@@ -8,12 +8,18 @@
 // Modifications made in 2025 by Nathan Felber
 // Adapted for use in NEST
 
-
 use std::{
-    convert, io::{self, Result as IoResult}, mem::size_of, path::Path, slice::from_raw_parts, sync::{Arc, Mutex, RwLock}, thread::{spawn, JoinHandle}, usize
+    convert,
+    io::{self, Result as IoResult},
+    mem::size_of,
+    path::Path,
+    slice::from_raw_parts,
+    sync::{Arc, Mutex, RwLock},
+    thread::{JoinHandle, spawn},
+    usize,
 };
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use thiserror::Error as ThisError;
 use vhost::vhost_user::message::{VhostUserProtocolFeatures, VhostUserVirtioFeatures};
 use vhost_user_backend::{VhostUserBackendMut, VhostUserDaemon, VringRwLock, VringT};
@@ -23,14 +29,15 @@ use virtio_bindings::bindings::{
 };
 use virtio_queue::{DescriptorChain, QueueOwnedT};
 use vm_memory::{
-    Bytes, GuestAddress, GuestAddressSpace, GuestMemoryAtomic, GuestMemoryLoadGuard, GuestMemoryMmap
+    Bytes, GuestAddress, GuestAddressSpace, GuestMemoryAtomic, GuestMemoryLoadGuard,
+    GuestMemoryMmap,
 };
 use vmm_sys_util::{
     epoll::EventSet,
-    eventfd::{EventFd, EFD_NONBLOCK},
+    eventfd::{EFD_NONBLOCK, EventFd},
 };
 
-use crate::component::qemu::{gpio::{messaging::*, virtio::*}};
+use crate::component::qemu::gpio::{messaging::*, virtio::*};
 
 type Result<T> = std::result::Result<T, GpioError>;
 

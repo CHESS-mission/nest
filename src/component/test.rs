@@ -137,7 +137,7 @@ impl Component for TestComponent {
             // Register gpio0 port handler
             dispatcher.register_system_port(&self.gpio0_port, Box::new(|msg, _state| {
                 // Echo on gpio1
-                self.gpio1_port.send(&JsonMessage::new(msg.data))?;
+                self.gpio1_port.send(&msg)?;
 
                 Ok(HandlerStatus::Ok)
             }));

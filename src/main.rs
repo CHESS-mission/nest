@@ -3,11 +3,9 @@ use serde_json::json;
 
 use nest::{
     component::{
-        Component, ComponentParams, LogEntry,
-        qemu::QemuComponent,
-        test::{TestComponent, TestComponentConfig},
+        qemu::QemuComponent, test::{TestComponent, TestComponentConfig}, Component, ComponentParams, LogEntry
     },
-    ports::{GenericSystemPort, JsonMessage, SystemPort},
+    ports::{BoolMessage, GenericSystemPort, JsonMessage, SystemPort},
 };
 
 fn format_log_entry(entry: &LogEntry, start: Instant) -> String {
@@ -26,10 +24,10 @@ fn format_log_entry(entry: &LogEntry, start: Instant) -> String {
 
 fn main() {
     // Create and connect ports
-    let mut qemu_gpio5_port: SystemPort<JsonMessage> = SystemPort::default();
-    let mut qemu_gpio7_port: SystemPort<JsonMessage> = SystemPort::default();
-    let mut test_gpio0_port: SystemPort<JsonMessage> = SystemPort::default();
-    let mut test_gpio1_port: SystemPort<JsonMessage> = SystemPort::default();
+    let mut qemu_gpio5_port: SystemPort<BoolMessage> = SystemPort::default();
+    let mut qemu_gpio7_port: SystemPort<BoolMessage> = SystemPort::default();
+    let mut test_gpio0_port: SystemPort<BoolMessage> = SystemPort::default();
+    let mut test_gpio1_port: SystemPort<BoolMessage> = SystemPort::default();
 
     let mut qemu_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
     let mut test_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
@@ -66,8 +64,8 @@ fn main() {
         },
     }));
 
-    qemu_params.add_system_port("gpio5", GenericSystemPort::Json(qemu_gpio5_port));
-    qemu_params.add_system_port("gpio7", GenericSystemPort::Json(qemu_gpio7_port));
+    qemu_params.add_system_port("gpio5", GenericSystemPort::Bool(qemu_gpio5_port));
+    qemu_params.add_system_port("gpio7", GenericSystemPort::Bool(qemu_gpio7_port));
     qemu_params.add_system_port("i2c", GenericSystemPort::Json(qemu_i2c_port));
 
     let qemu = QemuComponent::from_params(&qemu_params).unwrap();

@@ -72,8 +72,6 @@ pub enum GpioError {
     GpioIrqTypeInvalid(u8),
     #[error("Invalid gpio direction: {0}")]
     GpioDirectionInvalid(u32),
-    #[error("Invalid current gpio value")]
-    GpioCurrentValueInvalid,
     #[error("Invalid gpio value: {0}")]
     GpioValueInvalid(u32),
     #[error("Invalid gpio message type: {0}")]

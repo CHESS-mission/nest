@@ -7,8 +7,8 @@ pub use crate::component::qemu::i2c::messaging::*;
 
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result, bail};
 
 use crate::{
     component::{
@@ -16,7 +16,7 @@ use crate::{
             gpio::{messaging::GpioEvent, start_gpio_backend, GpioLine}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}
         }, Component, ComponentMonitor, ComponentParams, HandlerStatus, MessageDispatcher, MonitorCommand
     },
-    ports::{JsonMessage, SystemPort},
+    ports::{BoolMessage, JsonMessage, SystemPort},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -71,12 +71,12 @@ impl QemuComponentState {
 pub struct QemuComponent {
     config: QemuComponentConfig,
     gpio_lines: Vec<GpioLine>,
-    gpio_ports: Vec<SystemPort<JsonMessage>>,
+    gpio_ports: Vec<SystemPort<BoolMessage>>,
     i2c_port: SystemPort<JsonMessage>,
 }
 
 impl QemuComponent {
-    pub fn new(config: QemuComponentConfig, gpio_ports: Vec<SystemPort<JsonMessage>>, i2c_port: SystemPort<JsonMessage>) -> Result<Self> {
+    pub fn new(config: QemuComponentConfig, gpio_ports: Vec<SystemPort<BoolMessage>>, i2c_port: SystemPort<JsonMessage>) -> Result<Self> {
         let mut gpio_lines = vec![GpioLine::default(); config.ngpio as usize];
         for (i, name) in &config.gpio_names {
             let idx: usize = i.parse()?;
@@ -124,12 +124,12 @@ impl Component for QemuComponent {
             // Register gpio backend requests handler
             dispatcher.register(gpio_backend_handle.events_rx, Box::new(|req, _state| {
                 let (line, value) = match req {
-                    GpioEvent::ValueLow(line) => (line, GpioValue::Low),
-                    GpioEvent::ValueHigh(line) => (line, GpioValue::High),
+                    GpioEvent::ValueLow(line) => (line, false),
+                    GpioEvent::ValueHigh(line) => (line, true),
                 };
 
                 if let Some(port) = self.gpio_ports.get(line as usize) {
-                    port.send(&JsonMessage::new(serde_json::to_value(value)?))?;
+                    port.send(&BoolMessage::new(value))?;
                 } else {
                     logger.error(&format!("GPIO line out of range: {}", line))?;
                 }
@@ -140,20 +140,17 @@ impl Component for QemuComponent {
 
             // Register gpio port handlers
             for (i, gpio_port) in self.gpio_ports.iter().enumerate() {
-                let logger = &logger;
                 let gpio_backend_events_tx = &gpio_backend_handle.events_tx;
                 dispatcher.register_system_port(gpio_port, Box::new(move |msg, _state| {
-                    let gpio_value = serde_json::from_value::<GpioValue>(msg.data);
+                    let gpio_value_high = msg.data;
 
-                    if let Ok(value) = gpio_value {
-                        let event = match value {
-                            GpioValue::Low => GpioEvent::ValueLow(i as u16),
-                            GpioValue::High => GpioEvent::ValueHigh(i as u16),
-                        };
-                        gpio_backend_events_tx.send(event)?;
+                    let event = if gpio_value_high {
+                        GpioEvent::ValueHigh(i as u16)
                     } else {
-                        logger.error("Bad json received on gpio port")?;
-                    }
+                        GpioEvent::ValueLow(i as u16)
+                    };
+
+                    gpio_backend_events_tx.send(event)?;
 
                     Ok(HandlerStatus::Ok)
                 }));
@@ -226,7 +223,7 @@ impl Component for QemuComponent {
                     if let Some(i) = key.strip_prefix("gpio") {
                         if let Ok(idx) = i.parse::<usize>() {
                             if let Some(gpio_port) = gpio_ports.get_mut(idx) {
-                                *gpio_port = value.as_json()?.clone();
+                                *gpio_port = value.as_bool()?.clone();
                             } else {
                                 bail!("Gpio port {} out of range 0-{}", key, config.ngpio);
                             }

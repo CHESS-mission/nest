@@ -69,3 +69,18 @@ pub fn _get_or_create_json_path_mut<'a>(mut value: &'a mut Value, path: &[&str])
     }
     value
 }
+
+/// Helper macro for transparently operating on the [SystemPort] wrapped inside a [GenericSystemPort].
+#[macro_export]
+macro_rules! with_port {
+    ($gen_port:expr, |$port_ident:ident| $body:block) => {
+        match $gen_port {
+            GenericSystemPort::Int($port_ident) => $body,
+            GenericSystemPort::Float($port_ident) => $body,
+            GenericSystemPort::Bool($port_ident) => $body,
+            GenericSystemPort::Bytes($port_ident) => $body,
+            GenericSystemPort::Text($port_ident) => $body,
+            GenericSystemPort::Json($port_ident) => $body,
+        }
+    };
+}

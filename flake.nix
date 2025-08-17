@@ -19,6 +19,8 @@
         devShells.default = with pkgs; mkShell {
           name = "NEST devShell";
           buildInputs = [
+            picocom
+            socat
             extism-cli
             qemu
             llvmPackages.clang

@@ -1,11 +1,13 @@
 use anyhow::{bail, Result};
+use serde::Deserialize;
 use serde_json::json;
 use crate::{component::{ComponentParams, HandlerStatus, MessageDispatcher}, ports::{IntMessage, TextMessage}, set_status};
 use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
 
 // Config
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct TestComponentConfig {
     pub initial_sum: i32,
     pub greeting: String,
@@ -131,13 +133,7 @@ impl Component for TestComponent {
         let mut test_component = Self::default();
 
         // Parse config parameters into a TestComponentConfig
-        for (key, value) in &params.config {
-            match key.as_str() {
-                "initial_sum" => test_component.config.initial_sum = value.parse()?,
-                "greeting" => test_component.config.greeting = value.clone(),
-                _ => bail!("Unknown config parameter {} for TestComponent", key),
-            }
-        }
+        test_component.config = serde_json::from_value::<TestComponentConfig>(params.config().clone())?;
 
         // Get system ports from params
         for (key, value) in &params.system_ports {

@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use serde::Deserialize;
 use std::collections::HashMap;
 use serde_json::json;
 use extism::{Manifest, Plugin, PluginBuilder, Wasm, ValType, CurrentPlugin, Val, UserData};
@@ -13,7 +14,8 @@ use super::{Component, ComponentMonitor, MonitorCommand};
 
 // Config
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WasmComponentConfig {
     /// Path or URL to the WASM module (wasm.module)
     pub module: String,
@@ -22,12 +24,14 @@ pub struct WasmComponentConfig {
     /// - the host calls these when receiving messages on input ports
     /// - config: wasm.exports.<in_port> = <export_fn>
     /// - example: wasm.exports.cmd = handle_command  => host calls plugin export "handle_command" on messages arriving on port "cmd"
+    #[serde(default)]
     pub exports: HashMap<String, String>,
     /// Multi-port import mapping (plugin perspective):
     /// - "imports" are functions the plugin expects the host to provide (env::<name>)
     /// - when the plugin calls such an import, the host implementation emits a Text message on the mapped output port
     /// - config: wasm.imports.<out_port> = <import_fn>
     /// - example: wasm.imports.log = log  => host exposes env::log and forwards calls to output port "log"
+    #[serde(default)]
     pub imports: HashMap<String, String>,
 }
 
@@ -187,13 +191,8 @@ impl Component for WasmComponent {
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
         let mut comp = Self::default();
 
-    // Config (multi-port)
-        for (k, v) in &params.config {
-            if k == "wasm.module" { comp.config.module = v.clone(); continue; }
-            if let Some(p) = k.strip_prefix("wasm.exports.") { comp.config.exports.insert(p.to_string(), v.clone()); continue; }
-            if let Some(p) = k.strip_prefix("wasm.imports.") { comp.config.imports.insert(p.to_string(), v.clone()); continue; }
-            bail!("Unknown config parameter {} for WasmComponent", k);
-        }
+        // Parse config parameters into a TestComponentConfig
+        comp.config = serde_json::from_value::<WasmComponentConfig>(params.config().clone())?;
 
         // Ports: populate input and output maps based on configured mappings
         // Inputs
@@ -208,8 +207,8 @@ impl Component for WasmComponent {
             comp.out_ports.insert(out_name.clone(), gp.as_text()?.clone());
         }
 
-    if comp.config.module.is_empty() { bail!("Missing required config 'wasm.module'"); }
-    if comp.config.exports.is_empty() { bail!("Missing export mapping: set 'wasm.exports.<in>=<fn>'"); }
+        if comp.config.module.is_empty() { bail!("Missing required config 'wasm.module'"); }
+        if comp.config.exports.is_empty() { bail!("Missing export mapping: set 'wasm.exports.<in>=<fn>'"); }
 
         Ok(comp)
     }

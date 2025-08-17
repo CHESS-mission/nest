@@ -6,13 +6,16 @@ use nest::component::{Component, LogEntry};
 use nest::component::{test::TestComponent, ComponentParams};
 use nest::component::wasm::WasmComponent;
 use nest::ports::{GenericSystemPort, IntMessage, SystemPort, TextMessage};
+use serde_json::json;
 
 fn main() {
     // Create component test1 using new flexible parameters approach
     let mut params = ComponentParams::new();
 
-    params.add_config_entry("initial_sum", "42");
-    params.add_config_entry("greeting", "Hey!");
+    params.set_config(json!({
+        "initial_sum": 42,
+        "greeting": "Hey!",
+    }));
 
     params.add_system_port("cumsum", GenericSystemPort::Int(SystemPort::default()));
     params.add_system_port("print", GenericSystemPort::Text(SystemPort::default()));
@@ -55,8 +58,15 @@ fn main() {
     // ========== WASM component ==========
     // Prepare params
     let mut wasm_params = ComponentParams::new();
-    wasm_params.add_config_entry("wasm.module", "component_artifacts/ping_pong_c.wasm");
-    wasm_params.add_config_entry("wasm.exports.in", "ping");
+    wasm_params.set_config(json!({
+        "module": "component_artifacts/ping_pong_c.wasm",
+        "exports": {
+            "in": "ping",
+        },
+        "imports": {
+            "out": "pong",
+        },
+    }));
 
     wasm_params.add_system_port("in", GenericSystemPort::Text(SystemPort::default()));
     wasm_params.add_system_port("out", GenericSystemPort::Text(SystemPort::default()));
@@ -65,9 +75,6 @@ fn main() {
     let mut wasm_in_src = SystemPort::<TextMessage>::default();
     let wasm_in_port = wasm_params.system_port_mut("in").unwrap().as_text_mut().unwrap();
     wasm_in_src.connect_to(wasm_in_port);
-
-    // Bind host import env::pong -> out port (visible in logs)
-    wasm_params.add_config_entry("wasm.imports.out", "pong");
 
     let wasm_out_sink = SystemPort::<TextMessage>::default();
     let wasm_out_port = wasm_params.system_port_mut("out").unwrap().as_text_mut().unwrap();
@@ -82,9 +89,15 @@ fn main() {
 
     // ========== Temp Sensor WASM component ==========
     let mut temp_params = ComponentParams::new();
-    temp_params.add_config_entry("wasm.module", "component_artifacts/sensor_temp.wasm");
-    temp_params.add_config_entry("wasm.exports.i2c_in", "i2c_in");
-    temp_params.add_config_entry("wasm.imports.i2c_out", "i2c_out");
+    temp_params.set_config(json!({
+        "module": "component_artifacts/sensor_temp.wasm",
+        "exports": {
+            "i2c_in": "i2c_in",
+        },
+        "imports": {
+            "i2c_out": "i2c_out",
+        },
+    }));
 
     temp_params.add_system_port("i2c_in", GenericSystemPort::Text(SystemPort::default()));
     temp_params.add_system_port("i2c_out", GenericSystemPort::Text(SystemPort::default()));

@@ -35,34 +35,29 @@ pub trait Component: Send {
 /// Component parameters (key-value based).
 #[derive(Debug)]
 pub struct ComponentParams {
-    config: HashMap<String, String>,
+    config: serde_json::Value,
     system_ports: HashMap<String, GenericSystemPort>,
 }
 
 impl ComponentParams {
     /// Create a new empty [ComponentParams].
     pub fn new() -> Self {
-        Self { config: HashMap::new(), system_ports: HashMap::new() }
+        Self { config: serde_json::Value::Null, system_ports: HashMap::new() }
     }
     
-    /// Add a configuration entry to the parameters.
-    pub fn add_config_entry<K: Into<String>, V: Into<String>>(&mut self, key: K, value: V) {
-        self.config.insert(key.into(), value.into());
+    /// Get a reference to the config from the parameters.
+    pub fn config(&self) -> &serde_json::Value {
+        &self.config
     }
     
-    /// Get a configuration entry from the parameters if it exists.
-    pub fn config_entry(&self, key: &str) -> Option<&String> {
-        self.config.get(key)
+    /// Get a mutable reference to the config from the parameters.
+    pub fn config_mut(&mut self) -> &mut serde_json::Value {
+        &mut self.config
     }
     
-    /// Get a mutable reference to a configuration entry from the parameters if it exists.
-    pub fn config_entry_mut(&mut self, key: &str) -> Option<&mut String> {
-        self.config.get_mut(key)
-    }
-    
-    /// Get a vector of all configuration key-value pairs from the parameters.
-    pub fn config_entries(&self) -> Vec<(&String, &String)> {
-        self.config.iter().collect()
+    /// Overwrite config.
+    pub fn set_config(&mut self, config: serde_json::Value) {
+        self.config = config
     }
     
     /// Get a [GenericSystemPort] from the parameters if it exists.

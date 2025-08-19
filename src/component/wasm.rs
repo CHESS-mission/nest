@@ -92,7 +92,7 @@ impl WasmComponent {}
 
 impl Component for WasmComponent {
     fn start(self) -> Result<ComponentMonitor> {
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, status| {
+        let monitor = ComponentMonitor::start_monitor(move |command_receiver, _event_sender, logger, status| {
             // Initialize status
             set_status!(status.wasm, json!({
                 "module": self.config.module,
@@ -142,6 +142,9 @@ impl Component for WasmComponent {
                     MonitorCommand::StopStatusUpdates => {
                         logger.info("Stopping status updates")?;
                         state.update_status = false;
+                    }
+                    MonitorCommand::SimulatorCommand { command, args } => {
+                        todo!();
                     }
                 }
                 Ok(HandlerStatus::Ok)

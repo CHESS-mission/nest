@@ -1,7 +1,7 @@
 use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
 use crate::{
     component::{
-        qemu::{I2cOperation, I2cRequest, I2cResponse}, ComponentParams, HandlerStatus, MessageDispatcher
+        qemu::{I2cOperation, I2cRequest, I2cResponse}, ComponentEvent, ComponentParams, HandlerStatus, MessageDispatcher
     },
     ports::{BoolMessage, IntMessage, JsonMessage, TextMessage},
     set_status,
@@ -74,7 +74,7 @@ impl Component for TestComponent {
         // ComponentMonitor::start_monitor creates a new monitor for the provided closure and
         // takes care of spawning it as a new thread. It also passes fully initialized
         // command_receiver, logger and status instances to the closure.
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, status| {
+        let monitor = ComponentMonitor::start_monitor(move |command_receiver, event_sender, logger, status| {
             // Set initial status using the set_status macro
             set_status!(status.cumulative_sum, json!(0))?;
 
@@ -101,6 +101,25 @@ impl Component for TestComponent {
                     MonitorCommand::StopStatusUpdates => {
                         logger.info("Stopping status updates")?;
                         state.update_status = false;
+                    }
+                    MonitorCommand::SimulatorCommand { command, args } => {
+                        let args_string = args.to_string();
+                        let result = match command.as_str() {
+                            "set_cumsum" => {
+                                if let Ok(cumsum) = serde_json::from_value::<i32>(args) {
+                                    state.current_sum = cumsum - self.config.initial_sum;
+                                    Ok(())
+                                } else {
+                                    Err(format!("Bad arguments for simulator command {}: {}", command, args_string))
+                                }
+                            }
+                            _ => Err(format!("Unknown simulator command: {}", command)),
+                        };
+
+                        match result {
+                            Ok(()) => logger.info(&format!("Received simulator command: {} {}", command, args_string))?,
+                            Err(err) => logger.error(&err)?,
+                        };
                     }
                 }
 
@@ -131,6 +150,8 @@ impl Component for TestComponent {
             // should not use println, this is just for demonstration purposes.
             dispatcher.register_system_port(&self.print_port, Box::new(|msg, _state| {
                 println!("{} Got: {}", self.config.greeting, msg.data);
+                // Send a simulation event with the received data
+                event_sender.send(ComponentEvent::sim_event("print", msg.data))?;
                 Ok(HandlerStatus::Ok)
             }));
 

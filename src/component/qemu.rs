@@ -107,7 +107,7 @@ impl Component for QemuComponent {
         // Start i2c backend
         let i2c_backend_handle = start_i2c_backend(&i2c_socket, Duration::from_millis(self.config.i2c_timeout_ms));
 
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, _status| {
+        let monitor = ComponentMonitor::start_monitor(move |command_receiver, _event_sender, logger, _status| {
             let mut dispatcher = MessageDispatcher::<QemuComponentState>::new();
 
             // Register command receiver handler
@@ -116,6 +116,9 @@ impl Component for QemuComponent {
                     MonitorCommand::Stop => return Ok(HandlerStatus::Stop),
                     MonitorCommand::StartStatusUpdates => state.update_status = true,
                     MonitorCommand::StopStatusUpdates => state.update_status = false,
+                    MonitorCommand::SimulatorCommand { command, args } => {
+                        todo!();
+                    }
                 }
 
                 Ok(HandlerStatus::Ok)

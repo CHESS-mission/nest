@@ -241,6 +241,7 @@ impl Logger {
 pub struct ComponentMonitor {
     join_handle: JoinHandle<Result<()>>,
     command_sender: Sender<MonitorCommand>,
+    event_receiver: Receiver<ComponentEvent>,
     log_receiver: Receiver<LogEntry>,
     shared_status: Arc<Mutex<Value>>,
 }
@@ -248,8 +249,14 @@ pub struct ComponentMonitor {
 impl ComponentMonitor {
     /// Create a new [ComponentMonitor] from the handle of the component's thread, a command
     /// sender, a log receiver and the shared status object of the component.
-    pub fn new(join_handle: JoinHandle<Result<()>>, command_sender: Sender<MonitorCommand>, log_receiver: Receiver<LogEntry>, shared_status: Arc<Mutex<Value>>) -> Self {
-        Self { join_handle, command_sender, log_receiver, shared_status }
+    pub fn new(
+        join_handle: JoinHandle<Result<()>>,
+        command_sender: Sender<MonitorCommand>,
+        event_receiver: Receiver<ComponentEvent>,
+        log_receiver: Receiver<LogEntry>,
+        shared_status: Arc<Mutex<Value>>) -> Self
+    {
+        Self { join_handle, command_sender, event_receiver, log_receiver, shared_status }
     }
 
     /// Spawn the function `f` on a separate thread and returns a new [ComponentMonitor] to monitor
@@ -257,18 +264,24 @@ impl ComponentMonitor {
     /// arguments.
     pub fn start_monitor<F>(f: F) -> Self
     where
-        F: FnOnce(Receiver<MonitorCommand>, Logger, Arc<Mutex<Value>>) -> Result<()>,
+        F: FnOnce(Receiver<MonitorCommand>, Sender<ComponentEvent>, Logger, Arc<Mutex<Value>>) -> Result<()>,
         F: Send + 'static,
     {
         let (command_tx, command_rx) = unbounded();
+        let (event_tx, event_rx) = unbounded();
         let (log_tx, log_rx) = unbounded();
         let status = Arc::new(Mutex::new(Value::Null));
         let status_clone = status.clone();
-        let handle = thread::spawn(|| f(command_rx, Logger::new(log_tx), status_clone));
-        ComponentMonitor::new(handle, command_tx, log_rx, status)
+        let handle = thread::spawn(move || {
+            if let Err(e) = f(command_rx, event_tx.clone(), Logger::new(log_tx), status_clone) {
+                event_tx.send(ComponentEvent::Error(e.to_string()))?;
+            }
+            Ok(())
+        });
+        ComponentMonitor::new(handle, command_tx, event_rx, log_rx, status)
     }
 
-    /// Signal the component to stop. Note that the command will be queued and the component might
+    /// Request the component to stop. Note that the command will be queued and the component might
     /// not instantly stop.
     pub fn stop(self) -> Result<()> {
         self.command_sender.send(MonitorCommand::Stop)?;
@@ -276,19 +289,25 @@ impl ComponentMonitor {
         Ok(())
     }
 
-    /// Signal the component to start updating its status. Most component do not update their status
-    /// by default for performance reasons. Note that the command will be queued and might not
-    /// immediately take effect.
+    /// Request the component to start updating its status. Components are expected to not update
+    /// their status by default for performance reasons. Note that the command will be queued and
+    /// might not immediately take effect.
     pub fn start_status_updates(&self) -> Result<()> {
         self.command_sender.send(MonitorCommand::StartStatusUpdates)?;
         Ok(())
     }
 
-    /// Signal the component to stop updating its status. Most component do not update their status
-    /// by default for performance reasons. Note that the command will be queued and might not
-    /// immediately take effect.
+    /// Request the component to stop updating its status. Components are expected to not update
+    /// their status by default for performance reasons. Note that the command will be queued and
+    /// might not immediately take effect.
     pub fn stop_status_updates(&self) -> Result<()> {
         self.command_sender.send(MonitorCommand::StopStatusUpdates)?;
+        Ok(())
+    }
+
+    /// Issue a simulator command to the component.
+    pub fn simulator_command<S: Into<String>>(&self, command: S, args: serde_json::Value) -> Result<()> {
+        self.command_sender.send(MonitorCommand::SimulatorCommand { command: command.into(), args })?;
         Ok(())
     }
 
@@ -315,10 +334,55 @@ impl ComponentMonitor {
 /// Command sent from a [ComponentMonitor] to a [Component].
 #[derive(Clone, Debug)]
 pub enum MonitorCommand {
-    /// Signals the component to stop.
+    /// Requests the component to stop.
     Stop,
-    /// Signals the component to start updating its status.
+    /// Requests the component to start updating its status.
     StartStatusUpdates,
-    /// Signals the component to stop updating its status.
+    /// Requests the component to stop updating its status.
     StopStatusUpdates,
+    /// Issues a simulator command to the component.
+    SimulatorCommand { command: String, args: serde_json::Value },
+}
+
+impl MonitorCommand {
+    /// Create a new [MonitorCommand::SimulatorCommand].
+    pub fn sim_command<C, A>(command: C, args: A) -> Self
+    where
+        C: Into<String>,
+        A: Into<Value>,
+    {
+        Self::SimulatorCommand {
+            command: command.into(),
+            args: args.into(),
+        }
+    }
+}
+
+/// Event sent from a [Component] to a [ComponentMonitor].
+#[derive(Clone, Debug)]
+pub enum ComponentEvent {
+    /// Signals an unrecoverable error to the monitor. The component is expected to immediately
+    /// stop after sending a [ComponentEvent::Error].
+    Error(String),
+    /// Reports a simulation event to the simulator.
+    SimulationEvent { event: String, value: serde_json::Value },
+}
+
+impl ComponentEvent {
+    /// Create a new [ComponentEvent::Error].
+    pub fn error<E: Into<String>>(error: E) -> Self {
+        Self::Error(error.into())
+    }
+
+    /// Create a new [ComponentEvent::SimulationEvent].
+    pub fn sim_event<E, V>(event: E, value: V) -> Self
+    where
+        E: Into<String>,
+        V: Into<Value>,
+    {
+        Self::SimulationEvent {
+            event: event.into(),
+            value: value.into(),
+        }
+    }
 }

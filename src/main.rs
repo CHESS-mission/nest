@@ -2,7 +2,7 @@ use std::time::Instant;
 use serde_json::json;
 
 use nest::{
-    component::{Component, ComponentParams, LogEntry, qemu::QemuComponent, wasm::WasmComponent},
+    component::{qemu::QemuComponent, test::TestComponent, wasm::WasmComponent, Component, ComponentParams, LogEntry},
     ports::{GenericSystemPort, JsonMessage, SystemPort},
 };
 
@@ -24,9 +24,14 @@ fn main() {
     // Create and connect ports
     let mut qemu_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
     let mut temp_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
+    let mut test_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
 
     qemu_i2c_port.connect_to(&temp_i2c_port);
+    qemu_i2c_port.connect_to(&test_i2c_port);
+    temp_i2c_port.connect_to(&test_i2c_port);
     temp_i2c_port.connect_to(&qemu_i2c_port);
+    test_i2c_port.connect_to(&qemu_i2c_port);
+    test_i2c_port.connect_to(&temp_i2c_port);
 
     // Instanciate Qemu component
     let mut qemu_params = ComponentParams::new();
@@ -66,10 +71,22 @@ fn main() {
 
     let temp = WasmComponent::from_params(&temp_params).unwrap();
 
+    // Instantiate Test component
+    let mut test_params = ComponentParams::new();
+    test_params.set_config(json!({
+        "initial_sum": 42,
+        "greeting": "Hey!",
+    }));
+
+    test_params.add_system_port("i2c", GenericSystemPort::Json(test_i2c_port));
+
+    let test = TestComponent::from_params(&test_params).unwrap();
+
     // Start components
     let start = Instant::now();
     let temp_monitor = temp.start().unwrap();
     let qemu_monitor = qemu.start().unwrap();
+    let test_monitor = test.start().unwrap();
 
     // Infinite loop
     loop {
@@ -77,6 +94,7 @@ fn main() {
         crossbeam_channel::select! {
             recv(temp_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("TEMP", &entry.unwrap(), start)),
             recv(qemu_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("QEMU", &entry.unwrap(), start)),
+            recv(test_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("TEST", &entry.unwrap(), start)),
         }
     }
 }

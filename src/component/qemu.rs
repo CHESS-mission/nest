@@ -169,7 +169,7 @@ impl Component for QemuComponent {
 
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|resp, _state| {
-                let i2c_response = serde_json::from_value::<I2cResponse>(resp.data);
+                let i2c_response = serde_json::from_value::<I2cTransaction>(resp.data);
                 match i2c_response {
                     Ok(response) => i2c_backend_handle.response_tx.send(response)?,
                     Err(_) => logger.error("Bad json received on i2c port")?,

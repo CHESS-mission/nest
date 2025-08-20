@@ -311,6 +311,16 @@ impl ComponentMonitor {
         Ok(())
     }
 
+    /// Return a reference to the monitor's event receiver. Can be cloned safely.
+    pub fn event_receiver(&self) -> &Receiver<ComponentEvent> {
+        &self.event_receiver
+    }
+
+    /// Return a reference to the monitor's log receiver. Can be cloned safely.
+    pub fn log_receiver(&self) -> &Receiver<LogEntry> {
+        &self.log_receiver
+    }
+
     /// Read the component status and return a copy. Requires cloning but keeps the lock for the
     /// shortest amount of time.
     pub fn status(&self) -> Result<Value> {
@@ -323,11 +333,6 @@ impl ComponentMonitor {
     /// Note that the status should not be mutated outside of the component.
     pub fn status_shared(&self) -> Arc<Mutex<Value>> {
         Arc::clone(&self.shared_status)
-    }
-
-    /// Return a reference to the monitor's log receiver. Can be cloned safely.
-    pub fn log_receiver(&self) -> &Receiver<LogEntry> {
-        &self.log_receiver
     }
 }
 

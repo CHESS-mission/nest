@@ -1,7 +1,7 @@
 use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
 use crate::{
     component::{
-        qemu::{I2cOperation, I2cRequest, I2cResponse}, ComponentEvent, ComponentParams, HandlerStatus, MessageDispatcher
+        qemu::{I2cOperation, I2cTransaction, I2cResponse}, ComponentEvent, ComponentParams, HandlerStatus, MessageDispatcher
     },
     ports::{BoolMessage, IntMessage, JsonMessage, TextMessage},
     set_status,
@@ -165,20 +165,25 @@ impl Component for TestComponent {
 
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|msg, state| {
-                let request: I2cRequest = serde_json::from_value(msg.data).unwrap();
+                let I2cTransaction::Request { addr, op } = serde_json::from_value(msg.data)?
+                else {
+                    // Not a request: ignore
+                    return Ok(HandlerStatus::Ok);
+                };
 
-                if request.addr != 0x42 {
+
+                if addr != 0x42 {
                     return Ok(HandlerStatus::Ok)
                 }
 
-                let response = match request.op {
+                let response = match op {
                     I2cOperation::Write(buf) => {
                         if buf.len() >= 1 {
                             state.current_sum += buf[0] as i32;
                         } else {
                             logger.warning("Received zero-length i2c write request")?
                         }
-                        serde_json::to_value(I2cResponse::Write)?
+                        serde_json::to_value(I2cTransaction::Response(I2cResponse::Write))?
                     }
                     I2cOperation::Read(len) => {
                         let mut buf = Vec::new();
@@ -187,7 +192,7 @@ impl Component for TestComponent {
                         } else {
                             logger.warning("Received zero-length i2c read request")?
                         }
-                        serde_json::to_value(I2cResponse::Read(buf))?
+                        serde_json::to_value(I2cTransaction::Response(I2cResponse::Read(buf)))?
                     }
                 };
 

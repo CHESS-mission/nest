@@ -3,7 +3,7 @@ use serde_json::json;
 
 use nest::{
     component::{qemu::QemuComponent, test::TestComponent, wasm::WasmComponent, Component, ComponentParams, LogEntry},
-    ports::{GenericSystemPort, JsonMessage, SystemPort},
+    ports::{AnySystemPort, JsonMessage, SystemPortBuilder},
 };
 
 fn format_log_entry<S: Into<String>>(component_name: S, entry: &LogEntry, start: Instant) -> String {
@@ -22,16 +22,16 @@ fn format_log_entry<S: Into<String>>(component_name: S, entry: &LogEntry, start:
 
 fn main() {
     // Create and connect ports
-    let mut qemu_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
-    let mut temp_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
-    let mut test_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
+    let mut qemu_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
+    let mut temp_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
+    let mut test_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
 
-    qemu_i2c_port.connect_to(&temp_i2c_port);
-    qemu_i2c_port.connect_to(&test_i2c_port);
-    temp_i2c_port.connect_to(&test_i2c_port);
-    temp_i2c_port.connect_to(&qemu_i2c_port);
-    test_i2c_port.connect_to(&qemu_i2c_port);
-    test_i2c_port.connect_to(&temp_i2c_port);
+    qemu_i2c_port_builder.connect_to(&temp_i2c_port_builder);
+    qemu_i2c_port_builder.connect_to(&test_i2c_port_builder);
+    temp_i2c_port_builder.connect_to(&test_i2c_port_builder);
+    temp_i2c_port_builder.connect_to(&qemu_i2c_port_builder);
+    test_i2c_port_builder.connect_to(&qemu_i2c_port_builder);
+    test_i2c_port_builder.connect_to(&temp_i2c_port_builder);
 
     // Instanciate Qemu component
     let mut qemu_params = ComponentParams::new();
@@ -57,7 +57,7 @@ fn main() {
         },
     }));
 
-    qemu_params.add_system_port("i2c", GenericSystemPort::Json(qemu_i2c_port));
+    qemu_params.add_system_port("i2c", AnySystemPort::Json(qemu_i2c_port_builder.build()));
 
     let qemu = QemuComponent::from_params(&qemu_params).unwrap();
 
@@ -67,7 +67,7 @@ fn main() {
         "module": "component_artifacts/sensor_temp.wasm"
     }));
 
-    temp_params.add_system_port("i2c", GenericSystemPort::Json(temp_i2c_port));
+    temp_params.add_system_port("i2c", AnySystemPort::Json(temp_i2c_port_builder.build()));
 
     let temp = WasmComponent::from_params(&temp_params).unwrap();
 
@@ -78,7 +78,7 @@ fn main() {
         "greeting": "Hey!",
     }));
 
-    test_params.add_system_port("i2c", GenericSystemPort::Json(test_i2c_port));
+    test_params.add_system_port("i2c", AnySystemPort::Json(test_i2c_port_builder.build()));
 
     let test = TestComponent::from_params(&test_params).unwrap();
 
@@ -87,6 +87,15 @@ fn main() {
     let temp_monitor = temp.start().unwrap();
     let qemu_monitor = qemu.start().unwrap();
     let test_monitor = test.start().unwrap();
+
+    // loop {
+    //     // Print logs received from components
+    //     crossbeam_channel::select! {
+    //         recv(temp_monitor.event_receiver()) -> entry => println!("TEMP {:?}", &entry.unwrap()),
+    //         recv(qemu_monitor.event_receiver()) -> entry => println!("QEMU {:?}", &entry.unwrap()),
+    //         recv(test_monitor.event_receiver()) -> entry => println!("TEST {:?}", &entry.unwrap()),
+    //     }
+    // }
 
     // Infinite loop
     loop {

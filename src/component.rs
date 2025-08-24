@@ -5,10 +5,10 @@ pub mod test;
 use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Instant};
 
 use anyhow::{anyhow, Result};
-use crossbeam_channel::{unbounded, Receiver, Select, Sender};
+use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
 use serde_json::Value;
 
-use crate::ports::{GenericSystemPort, Message, SystemPort};
+use crate::ports::{AnyEnvironmentPort, AnySystemPort, Message, SystemPort};
 
 // Component
 
@@ -36,13 +36,14 @@ pub trait Component: Send {
 #[derive(Debug)]
 pub struct ComponentParams {
     config: serde_json::Value,
-    system_ports: HashMap<String, GenericSystemPort>,
+    system_ports: HashMap<String, AnySystemPort>,
+    env_ports: HashMap<String, AnyEnvironmentPort>,
 }
 
 impl ComponentParams {
     /// Create a new empty [ComponentParams].
     pub fn new() -> Self {
-        Self { config: serde_json::Value::Null, system_ports: HashMap::new() }
+        Self { config: serde_json::Value::Null, system_ports: HashMap::new(), env_ports: HashMap::new() }
     }
     
     /// Get a reference to the config from the parameters.
@@ -60,24 +61,44 @@ impl ComponentParams {
         self.config = config
     }
     
-    /// Get a [GenericSystemPort] from the parameters if it exists.
-    pub fn add_system_port<K: Into<String>>(&mut self, key: K, port: GenericSystemPort) {
+    /// Get a [AnySystemPort] from the parameters if it exists.
+    pub fn add_system_port<K: Into<String>>(&mut self, key: K, port: AnySystemPort) {
         self.system_ports.insert(key.into(), port);
     }
     
-    /// Get a [GenericSystemPort] from the parameters if it exists.
-    pub fn system_port(&self, key: &str) -> Option<&GenericSystemPort> {
+    /// Get a [AnySystemPort] from the parameters if it exists.
+    pub fn system_port(&self, key: &str) -> Option<&AnySystemPort> {
         self.system_ports.get(key)
     }
     
-    /// Get a mutable reference to a [GenericSystemPort] from the parameters if it exists.
-    pub fn system_port_mut(&mut self, key: &str) -> Option<&mut GenericSystemPort> {
+    /// Get a mutable reference to a [AnySystemPort] from the parameters if it exists.
+    pub fn system_port_mut(&mut self, key: &str) -> Option<&mut AnySystemPort> {
         self.system_ports.get_mut(key)
     }
     
-    /// Get a vector of all system port key-value pairs from the parameters.
-    pub fn system_ports(&self) -> Vec<(&String, &GenericSystemPort)> {
+    /// Get a vector of all [AnySystemPort] key-value pairs from the parameters.
+    pub fn system_ports(&self) -> Vec<(&String, &AnySystemPort)> {
         self.system_ports.iter().collect()
+    }
+    
+    /// Get a [AnyEnvironmentPort] from the parameters if it exists.
+    pub fn add_env_port<K: Into<String>>(&mut self, key: K, port: AnyEnvironmentPort) {
+        self.env_ports.insert(key.into(), port);
+    }
+    
+    /// Get a [AnyEnvironmentPort] from the parameters if it exists.
+    pub fn env_port(&self, key: &str) -> Option<&AnyEnvironmentPort> {
+        self.env_ports.get(key)
+    }
+    
+    /// Get a mutable reference to a [AnyEnvironmentPort] from the parameters if it exists.
+    pub fn env_port_mut(&mut self, key: &str) -> Option<&mut AnyEnvironmentPort> {
+        self.env_ports.get_mut(key)
+    }
+    
+    /// Get a vector of all [AnyEnvironmentPort] key-value pairs from the parameters.
+    pub fn env_ports(&self) -> Vec<(&String, &AnyEnvironmentPort)> {
+        self.env_ports.iter().collect()
     }
 }
 
@@ -123,7 +144,15 @@ impl<'a, S: 'a> MessageDispatcher<'a, S> {
         loop {
             // Wait until a receive operation becomes ready and handle it
             let index = sel.ready();
-            let status = self.message_handlers[index].handle(&mut state)?;
+            let status = match self.message_handlers[index].handle(&mut state) {
+                Ok(status) => status,
+                Err(HandlerError::Callback(error)) => return Err(error),
+                Err(HandlerError::Disconnected) => {
+                    // Remove disconnected receivers
+                    sel.remove(index);
+                    HandlerStatus::Ok
+                },
+            };
 
             // Shut down dispatcher if status is Stop
             if let HandlerStatus::Stop = status { return Ok(()) }
@@ -139,9 +168,17 @@ pub enum HandlerStatus {
     Stop,
 }
 
+#[derive(thiserror::Error, Debug)]
+enum HandlerError {
+    #[error("callback failed: {0}")]
+    Callback(#[from] anyhow::Error),
+    #[error("channel disconnected")]
+    Disconnected,
+}
+
 trait MessageHandler<S>: Send {
     fn register<'s, 'h>(&'h self, sel: &mut Select<'s>) where 'h: 's;
-    fn handle(&self, state: &mut S) -> Result<HandlerStatus>;
+    fn handle(&self, state: &mut S) -> Result<HandlerStatus, HandlerError>;
 }
 
 struct TypedMessageHandler<'a, T, S> {
@@ -163,10 +200,13 @@ impl<'a, T: Send + 'static, S> MessageHandler<S> for TypedMessageHandler<'a, T, 
         sel.recv(&self.receiver);
     }
 
-    fn handle(&self, state: &mut S) -> Result<HandlerStatus> {
-        match self.receiver.recv() {
-            Ok(msg) => (self.callback)(msg, state),
-            Err(e) => Err(e.into()),
+    fn handle(&self, state: &mut S) -> Result<HandlerStatus, HandlerError> {
+        match self.receiver.try_recv() {
+            Ok(msg) => (self.callback)(msg, state).map_err(HandlerError::Callback),
+            Err(e) => match e {
+                TryRecvError::Empty => Ok(HandlerStatus::Ok),
+                TryRecvError::Disconnected => Err(HandlerError::Disconnected),
+            },
         }
     }
 }

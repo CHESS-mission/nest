@@ -70,17 +70,91 @@ pub fn _get_or_create_json_path_mut<'a>(mut value: &'a mut Value, path: &[&str])
     value
 }
 
-/// Helper macro for transparently operating on the [SystemPort] wrapped inside a [GenericSystemPort].
+/// Helper macro for transparently operating on the message wrapper inside a type erased
+/// struct.
 #[macro_export]
-macro_rules! with_port {
-    ($gen_port:expr, |$port_ident:ident| $body:block) => {
-        match $gen_port {
-            GenericSystemPort::Int($port_ident) => $body,
-            GenericSystemPort::Float($port_ident) => $body,
-            GenericSystemPort::Bool($port_ident) => $body,
-            GenericSystemPort::Bytes($port_ident) => $body,
-            GenericSystemPort::Text($port_ident) => $body,
-            GenericSystemPort::Json($port_ident) => $body,
+macro_rules! with_message_wrapper {
+    ($any_type:ident, $any_enum:expr, |$wrapper:ident| $body:block) => {
+        match $any_enum {
+            $any_type::Int($wrapper) => $body,
+            $any_type::Float($wrapper) => $body,
+            $any_type::Bool($wrapper) => $body,
+            $any_type::Bytes($wrapper) => $body,
+            $any_type::Text($wrapper) => $body,
+            $any_type::Json($wrapper) => $body,
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! impl_as_into_methods {
+    ($enum_name:ident, $wrapper:ident, $variant:ident, $msg:ty, $method_as:ident, $method_as_mut:ident, $method_into:ident) => {
+        #[doc = concat!("Return a reference to the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
+                        "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
+        pub fn $method_as(&self) -> Result<&$wrapper<$msg>> {
+            match self {
+                $enum_name::$variant(wrapper) => Ok(wrapper),
+                _ => Err(anyhow!(
+                    "Can't convert {} into {}",
+                    stringify!($enum_name::$variant),
+                    stringify!($wrapper<$msg>)
+                )),
+            }
+        }
+
+        #[doc = concat!("Return a mutable reference to the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
+                        "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
+        pub fn $method_as_mut(&mut self) -> Result<&mut $wrapper<$msg>> {
+            match self {
+                $enum_name::$variant(wrapper) => Ok(wrapper),
+                _ => Err(anyhow!(
+                    "Can't convert {} into {}",
+                    stringify!($enum_name::$variant),
+                    stringify!($wrapper<$msg>)
+                )),
+            }
+        }
+
+        #[doc = concat!("Convert into the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
+                        "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
+        pub fn $method_into(self) -> Result<$wrapper<$msg>> {
+            match self {
+                $enum_name::$variant(wrapper) => Ok(wrapper),
+                _ => Err(anyhow!(
+                    "Can't convert {} into {}",
+                    stringify!($enum_name::$variant),
+                    stringify!($wrapper<$msg>)
+                )),
+            }
+        }
+    };
+}
+
+/// Create a type erased enum for structs generic on message types.
+#[macro_export]
+macro_rules! any_message_enum {
+    ($enum_name:ident, $wrapper:ident) => {
+        #[doc = concat!("A generic wrapper around [", stringify!($wrapper), "] to erase the underlying message type.\n\n",
+                        "Useful when working with heterogeneous [", stringify!($wrapper), "] collections, ",
+                        "but not efficient since it requires looking up the underlying type for most operations.")]
+        #[derive(Clone, Debug)]
+        pub enum $enum_name {
+            Int($wrapper<IntMessage>),
+            Float($wrapper<FloatMessage>),
+            Bool($wrapper<BoolMessage>),
+            Bytes($wrapper<BytesMessage>),
+            Text($wrapper<TextMessage>),
+            Json($wrapper<JsonMessage>),
+        }
+
+        impl $enum_name {
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Int, IntMessage, as_int, as_int_mut, into_int);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Float, FloatMessage, as_float, as_float_mut, into_float);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Bool, BoolMessage, as_bool, as_bool_mut, into_bool);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Bytes, BytesMessage, as_bytes, as_bytes_mut, into_bytes);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Text, TextMessage, as_text, as_text_mut, into_text);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Json, JsonMessage, as_json, as_json_mut, into_json);
         }
     };
 }

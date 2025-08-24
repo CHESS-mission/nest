@@ -1,19 +1,24 @@
 // SystemPort
 
+use std::sync::{Arc, RwLock, RwLockReadGuard};
+
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use serde_json::Value;
 
-/// Simple wrapper around crossbeam_channel receiver (one) and senders (many) with a Message type.
+use crate::any_message_enum;
+
+/// [SystemPort] builder for creating message channels and setting up connections
+/// with other ports.
 #[derive(Clone, Debug)]
-pub struct SystemPort<M: Message> {
+pub struct SystemPortBuilder<M: Message> {
     rx: Receiver<M>,
     local_tx: Sender<M>,
     connections: Vec<Sender<M>>,
 }
 
-impl<M: Message> SystemPort<M> {
-    /// Create a new [SystemPort] of given queue capacity.
+impl<M: Message> SystemPortBuilder<M> {
+    /// Create a new [SystemPortBuilder] of given queue capacity.
     pub fn new(queue_capacity: PortQueueCapacity) -> Self {
         let (local_tx, rx) = match queue_capacity {
             PortQueueCapacity::Unbounded => unbounded(),
@@ -22,21 +27,81 @@ impl<M: Message> SystemPort<M> {
         Self { rx, local_tx, connections: Vec::new() }
     }
 
-    /// Connect the port to another [SystemPort].
+    /// Connect the port to another [SystemPortBuilder].
     ///
     /// Note: this only means that messages sent through this port will be received
     /// by the other port, but not the other way around. For bi-directional connections,
     /// the other port should also connect to this port.
-    pub fn connect_to(&mut self, other: &SystemPort<M>) {
+    pub fn connect_to(&mut self, other: &SystemPortBuilder<M>) {
         self.connections.push(other.local_tx.clone());
     }
 
-    /// Send a message through the port.
-    pub fn send(&self, msg: &M) -> Result<()> {
-        for tx in &self.connections {
-            tx.send(msg.clone())?;
+    /// Build a new [SystemPort] from the [SystemPortBuilder].
+    pub fn build(self) -> SystemPort<M> {
+        SystemPort {
+            rx: self.rx,
+            connections: self.connections,
+        }
+    }
+}
+
+impl<M: Message> Default for SystemPortBuilder<M> {
+    fn default() -> Self {
+        Self::new(PortQueueCapacity::Unbounded)
+    }
+}
+
+any_message_enum!(AnySystemPortBuilder, SystemPortBuilder);
+
+impl AnySystemPortBuilder {
+    /// Connect the port to another [AnySystemPortBuilder]. Fails if the underlying ports are of
+    /// different types.
+    ///
+    /// Note: this only means that messages sent through this port will be received
+    /// by the other port, but not the other way around. For bi-directional connections,
+    /// the other port should also connect to this port.
+    pub fn connect_to(&mut self, other: &AnySystemPortBuilder) -> Result<()> {
+        match self {
+            AnySystemPortBuilder::Int(port) => port.connect_to(other.as_int()?),
+            AnySystemPortBuilder::Float(port) => port.connect_to(other.as_float()?),
+            AnySystemPortBuilder::Bool(port) => port.connect_to(other.as_bool()?),
+            AnySystemPortBuilder::Bytes(port) => port.connect_to(other.as_bytes()?),
+            AnySystemPortBuilder::Text(port) => port.connect_to(other.as_text()?),
+            AnySystemPortBuilder::Json(port) => port.connect_to(other.as_json()?),
         }
         Ok(())
+    }
+}
+
+/// Simple wrapper around crossbeam_channel receiver (one) and senders (many) with a Message type.
+#[derive(Clone, Debug)]
+pub struct SystemPort<M: Message> {
+    rx: Receiver<M>,
+    connections: Vec<Sender<M>>,
+}
+
+impl<M: Message> SystemPort<M> {
+    /// Create a new [SystemPort].
+    pub fn new(rx: Receiver<M>, connections: Vec<Sender<M>>) -> Self {
+        Self { rx, connections }
+    }
+
+    /// Send a message through the port.
+    pub fn send(&self, msg: M) {
+        // Avoid unnecessary clones of msg
+        // Use try_send to ignore channel full (avoid deadlocks) or disconnected
+        match self.connections.len() {
+            0 => {},
+            1 => {
+                let _ = self.connections[0].try_send(msg);
+            },
+            n => {
+                for tx in &self.connections[..n-1] {
+                    let _ = tx.try_send(msg.clone());
+                }
+                let _ = self.connections[n-1].try_send(msg);
+            },
+        }
     }
 
     /// Return a reference to the port's receiver
@@ -47,9 +112,11 @@ impl<M: Message> SystemPort<M> {
 
 impl<M: Message> Default for SystemPort<M> {
     fn default() -> Self {
-        Self::new(PortQueueCapacity::Unbounded)
+        SystemPortBuilder::default().build()
     }
 }
+
+any_message_enum!(AnySystemPort, SystemPort);
 
 /// Message queue capacity. Can be bounded or unbounded.
 #[derive(Clone, Debug)]
@@ -62,99 +129,52 @@ pub enum PortQueueCapacity {
     Bounded(usize),
 }
 
-/// A generic wrapper around [SystemPort] to erase the underlying type.
-/// Generic system ports are useful when working with heterogeneous [SystemPort] collections, but
-/// are not efficient since they require looking up the underlying type for most operations.
+// Environment port
+
+/// Simple read-only wrapper around an [EnvironmentVar].
 #[derive(Clone, Debug)]
-pub enum GenericSystemPort {
-    Int(SystemPort<IntMessage>),
-    Float(SystemPort<FloatMessage>),
-    Bool(SystemPort<BoolMessage>),
-    Bytes(SystemPort<BytesMessage>),
-    Text(SystemPort<TextMessage>),
-    Json(SystemPort<JsonMessage>),
+pub struct EnvironmentPort<M: Message> {
+    env_var: EnvironmentVar<M>,
 }
 
-macro_rules! impl_as_methods {
-    ($variant:ident, $method:ident, $method_mut:ident, $msg:ty) => {
-        #[doc = concat!("Return a reference to the underlying [`SystemPort<", stringify!($msg), ">`].",
-                        " Fails if not a [`GenericSystemPort<", stringify!($variant), ">`].")]
-        pub fn $method(&self) -> Result<&SystemPort<$msg>> {
-            match self {
-                GenericSystemPort::$variant(port) => Ok(port),
-                _ => Err(anyhow!(
-                    "Can't convert {} into {}",
-                    stringify!(GenericSystemPort::$variant),
-                    stringify!(SystemPort<$msg>)
-                )),
-            }
-        }
+impl<M: Message> EnvironmentPort<M> {
+    /// Create a new [EnvironmentPort].
+    pub fn new(env_var: EnvironmentVar<M>) -> Self {
+        Self { env_var }
+    }
 
-        #[doc = concat!("Return a mutable reference to the underlying [`SystemPort<", stringify!($msg), ">`].",
-                        " Fails if not a [`GenericSystemPort<", stringify!($variant), ">`].")]
-        pub fn $method_mut(&mut self) -> Result<&mut SystemPort<$msg>> {
-            match self {
-                GenericSystemPort::$variant(port) => Ok(port),
-                _ => Err(anyhow!(
-                    "Can't convert {} into {}",
-                    stringify!(GenericSystemPort::$variant),
-                    stringify!(SystemPort<$msg>)
-                )),
-            }
-        }
-    };
-}
+    /// Read the underlying value by **cloning** it.
+    /// Holds a read lock only for the time it takes to clone the value.
+    pub fn value(&self) -> M {
+        self.env_var.read().unwrap().clone()
+    }
 
-macro_rules! impl_into_method {
-    ($variant:ident, $method:ident, $msg:ty) => {
-        #[doc = concat!("Convert the port into the underlying [`SystemPort<", stringify!($msg), ">`].",
-                        " Fails if not a [`GenericSystemPort<", stringify!($variant), ">`].")]
-        pub fn $method(self) -> Result<SystemPort<$msg>> {
-            match self {
-                GenericSystemPort::$variant(port) => Ok(port),
-                _ => Err(anyhow!(
-                    "Can't convert {} into {}",
-                    stringify!(GenericSystemPort::$variant),
-                    stringify!(SystemPort<$msg>)
-                )),
-            }
-        }
-    };
-}
-
-impl GenericSystemPort {
-    impl_as_methods!(Int, as_int, as_int_mut, IntMessage);
-    impl_as_methods!(Float, as_float, as_float_mut, FloatMessage);
-    impl_as_methods!(Bool, as_bool, as_bool_mut, BoolMessage);
-    impl_as_methods!(Bytes, as_bytes, as_bytes_mut, BytesMessage);
-    impl_as_methods!(Text, as_text, as_text_mut, TextMessage);
-    impl_as_methods!(Json, as_json, as_json_mut, JsonMessage);
-
-    impl_into_method!(Int, into_int, IntMessage);
-    impl_into_method!(Float, into_float, FloatMessage);
-    impl_into_method!(Bool, into_bool, BoolMessage);
-    impl_into_method!(Bytes, into_bytes, BytesMessage);
-    impl_into_method!(Text, into_text, TextMessage);
-    impl_into_method!(Json, into_json, JsonMessage);
-
-    /// Connect the port to another [GenericSystemPort]. Fails if the underlying ports are of
-    /// different types.
-    ///
-    /// Note: this only means that messages sent through this port will be received
-    /// by the other port, but not the other way around. For bi-directional connections,
-    /// the other port should also connect to this port.
-    pub fn connect_to(&mut self, other: &GenericSystemPort) -> Result<()> {
-        match self {
-            GenericSystemPort::Int(port) => port.connect_to(other.as_int()?),
-            GenericSystemPort::Float(port) => port.connect_to(other.as_float()?),
-            GenericSystemPort::Bool(port) => port.connect_to(other.as_bool()?),
-            GenericSystemPort::Bytes(port) => port.connect_to(other.as_bytes()?),
-            GenericSystemPort::Text(port) => port.connect_to(other.as_text()?),
-            GenericSystemPort::Json(port) => port.connect_to(other.as_json()?),
-        }
-        Ok(())
+    /// Read the underlying value by **reference**.
+    /// Holds a read lock for as long as the reference is not dropped.
+    /// Returns a [`RwLockReadGuard`] so the caller can access it directly.
+    pub fn read(&self) -> RwLockReadGuard<'_, M> {
+        self.env_var.read().unwrap()
     }
 }
+
+any_message_enum!(AnyEnvironmentPort, EnvironmentPort);
+
+impl From<AnyEnvironmentVar> for AnyEnvironmentPort {
+    fn from(value: AnyEnvironmentVar) -> Self {
+        match value {
+            AnyEnvironmentVar::Int(env_var) => AnyEnvironmentPort::Int(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Float(env_var) => AnyEnvironmentPort::Float(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Bool(env_var) => AnyEnvironmentPort::Bool(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Bytes(env_var) => AnyEnvironmentPort::Bytes(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Text(env_var) => AnyEnvironmentPort::Text(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Json(env_var) => AnyEnvironmentPort::Json(EnvironmentPort::new(env_var)),
+        }
+    }
+}
+
+pub type EnvironmentVar<M> = Arc<RwLock<M>>;
+
+any_message_enum!(AnyEnvironmentVar, EnvironmentVar);
 
 // Message
 

@@ -141,7 +141,7 @@ impl Component for TestComponent {
 
                 // Send a message through the component's print port
                 let output = TextMessage::new(&format!("Cumulative sum: {}", cumsum));
-                self.print_port.send(&output)?;
+                self.print_port.send(output);
 
                 Ok(HandlerStatus::Ok)
             }));
@@ -158,7 +158,7 @@ impl Component for TestComponent {
             // Register gpio0 port handler
             dispatcher.register_system_port(&self.gpio0_port, Box::new(|msg, _state| {
                 // Echo on gpio1
-                self.gpio1_port.send(&msg)?;
+                self.gpio1_port.send(msg);
 
                 Ok(HandlerStatus::Ok)
             }));
@@ -196,7 +196,7 @@ impl Component for TestComponent {
                     }
                 };
 
-                self.i2c_port.send(&JsonMessage::new(response))?;
+                self.i2c_port.send(JsonMessage::new(response));
 
                 Ok(HandlerStatus::Ok)
             }));

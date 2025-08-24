@@ -132,7 +132,7 @@ impl Component for QemuComponent {
                 };
 
                 if let Some(port) = self.gpio_ports.get(line as usize) {
-                    port.send(&BoolMessage::new(value))?;
+                    port.send(BoolMessage::new(value));
                 } else {
                     logger.error(&format!("GPIO line out of range: {}", line))?;
                 }
@@ -162,7 +162,7 @@ impl Component for QemuComponent {
             // Register i2c backend requests handler
             dispatcher.register(i2c_backend_handle.request_rx, Box::new(|req, _state| {
                 let i2c_request = serde_json::to_value(req)?;
-                self.i2c_port.send(&JsonMessage::new(i2c_request))?;
+                self.i2c_port.send(JsonMessage::new(i2c_request));
 
                 Ok(HandlerStatus::Ok)
             }));

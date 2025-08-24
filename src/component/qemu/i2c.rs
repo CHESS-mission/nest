@@ -396,7 +396,7 @@ pub mod messaging {
         Read(usize),
     }
 
-    /// A response sent from the simulated device back to the [VhostUserI2cBackend].
+    /// A response sent from the simulated device back to the I2C backend.
     #[derive(Debug, Clone)]
     #[derive(Serialize, Deserialize)]
     pub enum I2cResponse {
@@ -410,11 +410,11 @@ pub mod messaging {
     #[derive(Debug, Clone)]
     #[derive(Serialize, Deserialize)]
     pub enum I2cTransaction {
-        /// A request sent from the [VhostUserI2cBackend] to the simulated device.
+        /// A request sent from the I2C backend to the simulated device.
         /// - `addr`: The 7-bit I2C device address.
         /// - `op`: The operation to perform.
         Request { addr: u16, op: I2cOperation },
-        /// A response sent from the simulated device back to the [VhostUserI2cBackend].
+        /// A response sent from the simulated device back to the I2C backend.
         Response(I2cResponse),
     }
 }

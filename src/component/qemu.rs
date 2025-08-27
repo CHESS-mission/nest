@@ -14,7 +14,7 @@ use crate::{
     component::{
         qemu::{
             gpio::{messaging::GpioEvent, start_gpio_backend, GpioLine}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}
-        }, Component, ComponentMonitor, ComponentParams, HandlerStatus, MessageDispatcher, MonitorCommand
+        }, Component, ComponentHandle, ComponentParams, HandlerStatus, MessageDispatcher, ComponentHandleCommand
     },
     ports::{BoolMessage, JsonMessage, SystemPort},
 };
@@ -90,7 +90,7 @@ impl QemuComponent {
 }
 
 impl Component for QemuComponent {
-    fn start(self) -> Result<ComponentMonitor> {
+    fn start(self) -> Result<ComponentHandle> {
         // Create gpio socket
         let gpio_socket = self.config.gpio_socket.as_ref().map(PathBuf::from).unwrap_or_else(||
             std::env::temp_dir().join(format!("vgpio-{}.sock", uuid::Uuid::new_v4()))
@@ -107,16 +107,16 @@ impl Component for QemuComponent {
         // Start i2c backend
         let i2c_backend_handle = start_i2c_backend(&i2c_socket, Duration::from_millis(self.config.i2c_timeout_ms));
 
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, _event_sender, logger, _status| {
+        let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, _status| {
             let mut dispatcher = MessageDispatcher::<QemuComponentState>::new();
 
             // Register command receiver handler
             dispatcher.register(command_receiver, Box::new(|msg, state| {
                 match msg {
-                    MonitorCommand::Stop => return Ok(HandlerStatus::Stop),
-                    MonitorCommand::StartStatusUpdates => state.update_status = true,
-                    MonitorCommand::StopStatusUpdates => state.update_status = false,
-                    MonitorCommand::SimulatorCommand { command, args } => {
+                    ComponentHandleCommand::Stop => return Ok(HandlerStatus::Stop),
+                    ComponentHandleCommand::StartStatusUpdates => state.update_status = true,
+                    ComponentHandleCommand::StopStatusUpdates => state.update_status = false,
+                    ComponentHandleCommand::SimulatorCommand { command, args } => {
                         todo!();
                     }
                 }
@@ -208,7 +208,7 @@ impl Component for QemuComponent {
             Ok(())
         });
 
-        Ok(monitor)
+        Ok(handle)
     }
 
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {

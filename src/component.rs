@@ -15,15 +15,15 @@ use crate::ports::{AnyEnvironmentPort, AnySystemPort, Message, SystemPort};
 /// Trait implemented by components.
 ///
 /// The start method is called by the simulator to start executing the component and returns a
-/// [ComponentMonitor].
+/// [ComponentHandle].
 ///
 /// The from_params method must allow creating new instances of the component from a
 /// [ComponentParams].
 pub trait Component: Send {
     /// Start executing the component on a new thread.
     ///
-    /// Return a [ComponentMonitor] with a handle to the spawned thread.
-    fn start(self) -> Result<ComponentMonitor>;
+    /// Return a [ComponentHandle] with a handle to the spawned thread.
+    fn start(self) -> Result<ComponentHandle>;
 
     /// Creates a new instance of the component from a [ComponentParams].
     /// The method should return an error if invalid parameter are passed.
@@ -242,7 +242,7 @@ impl LogEntry {
     }
 }
 
-/// Convenience object for components to send logs to their [ComponentMonitor].
+/// Convenience object for components to send logs to their [ComponentHandle].
 #[derive(Clone, Debug)]
 pub struct Logger {
     tx: Sender<LogEntry>,
@@ -273,25 +273,25 @@ impl Logger {
     }
 }
 
-// ComponentMonitor
+// ComponentHandle
 
-/// A handle to monitor the execution of a [Component]. It allows to send commands (see [MonitorCommand]),
+/// A handle to control the execution of a [Component]. It allows to send commands (see [ComponentHandleCommand]),
 /// receive logs (see [LogEntry]) and read the component's status.
 #[derive(Debug)]
-pub struct ComponentMonitor {
+pub struct ComponentHandle {
     join_handle: JoinHandle<Result<()>>,
-    command_sender: Sender<MonitorCommand>,
+    command_sender: Sender<ComponentHandleCommand>,
     event_receiver: Receiver<ComponentEvent>,
     log_receiver: Receiver<LogEntry>,
     shared_status: Arc<Mutex<Value>>,
 }
 
-impl ComponentMonitor {
-    /// Create a new [ComponentMonitor] from the handle of the component's thread, a command
+impl ComponentHandle {
+    /// Create a new [ComponentHandle] from the handle of the component's thread, a command
     /// sender, a log receiver and the shared status object of the component.
     pub fn new(
         join_handle: JoinHandle<Result<()>>,
-        command_sender: Sender<MonitorCommand>,
+        command_sender: Sender<ComponentHandleCommand>,
         event_receiver: Receiver<ComponentEvent>,
         log_receiver: Receiver<LogEntry>,
         shared_status: Arc<Mutex<Value>>) -> Self
@@ -299,12 +299,12 @@ impl ComponentMonitor {
         Self { join_handle, command_sender, event_receiver, log_receiver, shared_status }
     }
 
-    /// Spawn the function `f` on a separate thread and returns a new [ComponentMonitor] to monitor
+    /// Spawn the function `f` on a separate thread and returns a new [ComponentHandle] to handle
     /// it. The function `f` receives the command receiver, [Logger], and shared status reference as
     /// arguments.
-    pub fn start_monitor<F>(f: F) -> Self
+    pub fn start<F>(f: F) -> Self
     where
-        F: FnOnce(Receiver<MonitorCommand>, Sender<ComponentEvent>, Logger, Arc<Mutex<Value>>) -> Result<()>,
+        F: FnOnce(Receiver<ComponentHandleCommand>, Sender<ComponentEvent>, Logger, Arc<Mutex<Value>>) -> Result<()>,
         F: Send + 'static,
     {
         let (command_tx, command_rx) = unbounded();
@@ -318,13 +318,13 @@ impl ComponentMonitor {
             }
             Ok(())
         });
-        ComponentMonitor::new(handle, command_tx, event_rx, log_rx, status)
+        ComponentHandle::new(handle, command_tx, event_rx, log_rx, status)
     }
 
     /// Request the component to stop. Note that the command will be queued and the component might
     /// not instantly stop.
     pub fn stop(self) -> Result<()> {
-        self.command_sender.send(MonitorCommand::Stop)?;
+        self.command_sender.send(ComponentHandleCommand::Stop)?;
         self.join_handle.join().unwrap().unwrap();
         Ok(())
     }
@@ -333,7 +333,7 @@ impl ComponentMonitor {
     /// their status by default for performance reasons. Note that the command will be queued and
     /// might not immediately take effect.
     pub fn start_status_updates(&self) -> Result<()> {
-        self.command_sender.send(MonitorCommand::StartStatusUpdates)?;
+        self.command_sender.send(ComponentHandleCommand::StartStatusUpdates)?;
         Ok(())
     }
 
@@ -341,22 +341,22 @@ impl ComponentMonitor {
     /// their status by default for performance reasons. Note that the command will be queued and
     /// might not immediately take effect.
     pub fn stop_status_updates(&self) -> Result<()> {
-        self.command_sender.send(MonitorCommand::StopStatusUpdates)?;
+        self.command_sender.send(ComponentHandleCommand::StopStatusUpdates)?;
         Ok(())
     }
 
     /// Issue a simulator command to the component.
     pub fn simulator_command<S: Into<String>>(&self, command: S, args: serde_json::Value) -> Result<()> {
-        self.command_sender.send(MonitorCommand::SimulatorCommand { command: command.into(), args })?;
+        self.command_sender.send(ComponentHandleCommand::SimulatorCommand { command: command.into(), args })?;
         Ok(())
     }
 
-    /// Return a reference to the monitor's event receiver. Can be cloned safely.
+    /// Return a reference to the handle's event receiver. Can be cloned safely.
     pub fn event_receiver(&self) -> &Receiver<ComponentEvent> {
         &self.event_receiver
     }
 
-    /// Return a reference to the monitor's log receiver. Can be cloned safely.
+    /// Return a reference to the handle's log receiver. Can be cloned safely.
     pub fn log_receiver(&self) -> &Receiver<LogEntry> {
         &self.log_receiver
     }
@@ -376,9 +376,9 @@ impl ComponentMonitor {
     }
 }
 
-/// Command sent from a [ComponentMonitor] to a [Component].
+/// Command sent from a [ComponentHandle] to a [Component].
 #[derive(Clone, Debug)]
-pub enum MonitorCommand {
+pub enum ComponentHandleCommand {
     /// Requests the component to stop.
     Stop,
     /// Requests the component to start updating its status.
@@ -389,8 +389,8 @@ pub enum MonitorCommand {
     SimulatorCommand { command: String, args: serde_json::Value },
 }
 
-impl MonitorCommand {
-    /// Create a new [MonitorCommand::SimulatorCommand].
+impl ComponentHandleCommand {
+    /// Create a new [ComponentHandleCommand::SimulatorCommand].
     pub fn sim_command<C, A>(command: C, args: A) -> Self
     where
         C: Into<String>,
@@ -403,11 +403,11 @@ impl MonitorCommand {
     }
 }
 
-/// Event sent from a [Component] to a [ComponentMonitor].
+/// Event sent from a [Component] to a [ComponentHandle].
 #[derive(Clone, Debug)]
 pub enum ComponentEvent {
-    /// Signals an unrecoverable error to the monitor. The component is expected to immediately
-    /// stop after sending a [ComponentEvent::Error].
+    /// Signals an unrecoverable error to the component handle. The component is expected to
+    /// immediately stop after sending a [ComponentEvent::Error].
     Error(String),
     /// Reports a simulation event to the simulator.
     SimulationEvent { event: String, value: serde_json::Value },

@@ -10,7 +10,7 @@ use crate::{
     set_status, with_message_wrapper,
 };
 
-use super::{Component, ComponentMonitor, MonitorCommand};
+use super::{Component, ComponentHandle, ComponentHandleCommand};
 
 // Ports output host function
 
@@ -91,8 +91,8 @@ config: WasmComponentConfig,
 impl WasmComponent {}
 
 impl Component for WasmComponent {
-    fn start(self) -> Result<ComponentMonitor> {
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, _event_sender, logger, status| {
+    fn start(self) -> Result<ComponentHandle> {
+        let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, status| {
             // Initialize status
             set_status!(status.wasm, json!({
                 "module": self.config.module,
@@ -131,19 +131,19 @@ impl Component for WasmComponent {
             // Commands
             dispatcher.register(command_receiver, Box::new(|msg, state| {
                 match msg {
-                    MonitorCommand::Stop => {
+                    ComponentHandleCommand::Stop => {
                         logger.info("Stopping WASM component")?;
                         return Ok(HandlerStatus::Stop);
                     }
-                    MonitorCommand::StartStatusUpdates => {
+                    ComponentHandleCommand::StartStatusUpdates => {
                         logger.info("Starting status updates")?;
                         state.update_status = true;
                     }
-                    MonitorCommand::StopStatusUpdates => {
+                    ComponentHandleCommand::StopStatusUpdates => {
                         logger.info("Stopping status updates")?;
                         state.update_status = false;
                     }
-                    MonitorCommand::SimulatorCommand { command, args } => {
+                    ComponentHandleCommand::SimulatorCommand { command, args } => {
                         todo!();
                     }
                 }
@@ -178,7 +178,7 @@ impl Component for WasmComponent {
             Ok(())
         });
 
-        Ok(monitor)
+        Ok(handle)
     }
 
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {

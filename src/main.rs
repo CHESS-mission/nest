@@ -84,16 +84,16 @@ fn main() {
 
     // Start components
     let start = Instant::now();
-    let temp_monitor = temp.start().unwrap();
-    let qemu_monitor = qemu.start().unwrap();
-    let test_monitor = test.start().unwrap();
+    let temp_handle = temp.start().unwrap();
+    let qemu_handle = qemu.start().unwrap();
+    let test_handle = test.start().unwrap();
 
     // loop {
-    //     // Print logs received from components
+    //     // Print events received from components
     //     crossbeam_channel::select! {
-    //         recv(temp_monitor.event_receiver()) -> entry => println!("TEMP {:?}", &entry.unwrap()),
-    //         recv(qemu_monitor.event_receiver()) -> entry => println!("QEMU {:?}", &entry.unwrap()),
-    //         recv(test_monitor.event_receiver()) -> entry => println!("TEST {:?}", &entry.unwrap()),
+    //         recv(temp_handle.event_receiver()) -> entry => println!("TEMP {:?}", &entry.unwrap()),
+    //         recv(qemu_handle.event_receiver()) -> entry => println!("QEMU {:?}", &entry.unwrap()),
+    //         recv(test_handle.event_receiver()) -> entry => println!("TEST {:?}", &entry.unwrap()),
     //     }
     // }
 
@@ -101,9 +101,9 @@ fn main() {
     loop {
         // Print logs received from components
         crossbeam_channel::select! {
-            recv(temp_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("TEMP", &entry.unwrap(), start)),
-            recv(qemu_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("QEMU", &entry.unwrap(), start)),
-            recv(test_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("TEST", &entry.unwrap(), start)),
+            recv(temp_handle.log_receiver()) -> entry => println!("{}", format_log_entry("TEMP", &entry.unwrap(), start)),
+            recv(qemu_handle.log_receiver()) -> entry => println!("{}", format_log_entry("QEMU", &entry.unwrap(), start)),
+            recv(test_handle.log_receiver()) -> entry => println!("{}", format_log_entry("TEST", &entry.unwrap(), start)),
         }
     }
 }

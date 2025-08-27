@@ -1,4 +1,4 @@
-use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
+use super::{Component, ComponentHandle, ComponentHandleCommand, SystemPort};
 use crate::{
     component::{
         qemu::{I2cOperation, I2cTransaction, I2cResponse}, ComponentEvent, ComponentParams, HandlerStatus, MessageDispatcher
@@ -70,11 +70,11 @@ impl TestComponent {
 }
 
 impl Component for TestComponent {
-    fn start(self) -> Result<ComponentMonitor> {
-        // ComponentMonitor::start_monitor creates a new monitor for the provided closure and
+    fn start(self) -> Result<ComponentHandle> {
+        // ComponentHandle::start creates a new handle for the provided closure and
         // takes care of spawning it as a new thread. It also passes fully initialized
         // command_receiver, logger and status instances to the closure.
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, event_sender, logger, status| {
+        let handle = ComponentHandle::start(move |command_receiver, event_sender, logger, status| {
             // Set initial status using the set_status macro
             set_status!(status.cumulative_sum, json!(0))?;
 
@@ -86,23 +86,23 @@ impl Component for TestComponent {
             // object (state). Here, that state is of type TestComponentState.
             dispatcher.register(command_receiver, Box::new(|msg, state| {
                 match msg {
-                    MonitorCommand::Stop => {
+                    ComponentHandleCommand::Stop => {
                         // Log infos with the logger
                         logger.info("Stopping component")?;
                         // To stop handling further messages, return HandlerStatus::Stop
                         return Ok(HandlerStatus::Stop);
                     }
-                    MonitorCommand::StartStatusUpdates => {
+                    ComponentHandleCommand::StartStatusUpdates => {
                         logger.info("Starting status updates")?;
                         // Update the state object. This modification will be visible from other
                         // closures since they all receive the object as argument.
                         state.update_status = true;
                     }
-                    MonitorCommand::StopStatusUpdates => {
+                    ComponentHandleCommand::StopStatusUpdates => {
                         logger.info("Stopping status updates")?;
                         state.update_status = false;
                     }
-                    MonitorCommand::SimulatorCommand { command, args } => {
+                    ComponentHandleCommand::SimulatorCommand { command, args } => {
                         let args_string = args.to_string();
                         let result = match command.as_str() {
                             "set_cumsum" => {
@@ -207,8 +207,8 @@ impl Component for TestComponent {
             Ok(())
         });
 
-        // Return the monitor to the calling thread
-        Ok(monitor)
+        // Return the handle to the calling thread
+        Ok(handle)
     }
 
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {

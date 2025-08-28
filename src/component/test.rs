@@ -1,7 +1,7 @@
-use super::{Component, ComponentMonitor, MonitorCommand, SystemPort};
+use super::{Component, ComponentHandle, ComponentHandleCommand, SystemPort};
 use crate::{
     component::{
-        qemu::{I2cOperation, I2cRequest, I2cResponse}, ComponentParams, HandlerStatus, MessageDispatcher
+        qemu::{I2cOperation, I2cTransaction, I2cResponse}, ComponentEvent, ComponentParams, HandlerStatus, MessageDispatcher
     },
     ports::{BoolMessage, IntMessage, JsonMessage, TextMessage},
     set_status,
@@ -70,11 +70,11 @@ impl TestComponent {
 }
 
 impl Component for TestComponent {
-    fn start(self) -> Result<ComponentMonitor> {
-        // ComponentMonitor::start_monitor creates a new monitor for the provided closure and
+    fn start(self) -> Result<ComponentHandle> {
+        // ComponentHandle::start creates a new handle for the provided closure and
         // takes care of spawning it as a new thread. It also passes fully initialized
         // command_receiver, logger and status instances to the closure.
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, status| {
+        let handle = ComponentHandle::start(move |command_receiver, event_sender, logger, status| {
             // Set initial status using the set_status macro
             set_status!(status.cumulative_sum, json!(0))?;
 
@@ -86,21 +86,40 @@ impl Component for TestComponent {
             // object (state). Here, that state is of type TestComponentState.
             dispatcher.register(command_receiver, Box::new(|msg, state| {
                 match msg {
-                    MonitorCommand::Stop => {
+                    ComponentHandleCommand::Stop => {
                         // Log infos with the logger
                         logger.info("Stopping component")?;
                         // To stop handling further messages, return HandlerStatus::Stop
                         return Ok(HandlerStatus::Stop);
                     }
-                    MonitorCommand::StartStatusUpdates => {
+                    ComponentHandleCommand::StartStatusUpdates => {
                         logger.info("Starting status updates")?;
                         // Update the state object. This modification will be visible from other
                         // closures since they all receive the object as argument.
                         state.update_status = true;
                     }
-                    MonitorCommand::StopStatusUpdates => {
+                    ComponentHandleCommand::StopStatusUpdates => {
                         logger.info("Stopping status updates")?;
                         state.update_status = false;
+                    }
+                    ComponentHandleCommand::SimulatorCommand { command, args } => {
+                        let args_string = args.to_string();
+                        let result = match command.as_str() {
+                            "set_cumsum" => {
+                                if let Ok(cumsum) = serde_json::from_value::<i32>(args) {
+                                    state.current_sum = cumsum - self.config.initial_sum;
+                                    Ok(())
+                                } else {
+                                    Err(format!("Bad arguments for simulator command {}: {}", command, args_string))
+                                }
+                            }
+                            _ => Err(format!("Unknown simulator command: {}", command)),
+                        };
+
+                        match result {
+                            Ok(()) => logger.info(&format!("Received simulator command: {} {}", command, args_string))?,
+                            Err(err) => logger.error(&err)?,
+                        };
                     }
                 }
 
@@ -122,7 +141,7 @@ impl Component for TestComponent {
 
                 // Send a message through the component's print port
                 let output = TextMessage::new(&format!("Cumulative sum: {}", cumsum));
-                self.print_port.send(&output)?;
+                self.print_port.send(output);
 
                 Ok(HandlerStatus::Ok)
             }));
@@ -131,33 +150,40 @@ impl Component for TestComponent {
             // should not use println, this is just for demonstration purposes.
             dispatcher.register_system_port(&self.print_port, Box::new(|msg, _state| {
                 println!("{} Got: {}", self.config.greeting, msg.data);
+                // Send a simulation event with the received data
+                event_sender.send(ComponentEvent::sim_event("print", msg.data))?;
                 Ok(HandlerStatus::Ok)
             }));
 
             // Register gpio0 port handler
             dispatcher.register_system_port(&self.gpio0_port, Box::new(|msg, _state| {
                 // Echo on gpio1
-                self.gpio1_port.send(&msg)?;
+                self.gpio1_port.send(msg);
 
                 Ok(HandlerStatus::Ok)
             }));
 
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|msg, state| {
-                let request: I2cRequest = serde_json::from_value(msg.data).unwrap();
+                let I2cTransaction::Request { addr, op } = serde_json::from_value(msg.data)?
+                else {
+                    // Not a request: ignore
+                    return Ok(HandlerStatus::Ok);
+                };
 
-                if request.addr != 0x42 {
+
+                if addr != 0x42 {
                     return Ok(HandlerStatus::Ok)
                 }
 
-                let response = match request.op {
+                let response = match op {
                     I2cOperation::Write(buf) => {
                         if buf.len() >= 1 {
                             state.current_sum += buf[0] as i32;
                         } else {
                             logger.warning("Received zero-length i2c write request")?
                         }
-                        serde_json::to_value(I2cResponse::Write)?
+                        serde_json::to_value(I2cTransaction::Response(I2cResponse::Write))?
                     }
                     I2cOperation::Read(len) => {
                         let mut buf = Vec::new();
@@ -166,11 +192,11 @@ impl Component for TestComponent {
                         } else {
                             logger.warning("Received zero-length i2c read request")?
                         }
-                        serde_json::to_value(I2cResponse::Read(buf))?
+                        serde_json::to_value(I2cTransaction::Response(I2cResponse::Read(buf)))?
                     }
                 };
 
-                self.i2c_port.send(&JsonMessage::new(response))?;
+                self.i2c_port.send(JsonMessage::new(response));
 
                 Ok(HandlerStatus::Ok)
             }));
@@ -181,8 +207,8 @@ impl Component for TestComponent {
             Ok(())
         });
 
-        // Return the monitor to the calling thread
-        Ok(monitor)
+        // Return the handle to the calling thread
+        Ok(handle)
     }
 
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {

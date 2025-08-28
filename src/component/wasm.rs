@@ -6,56 +6,56 @@ use extism::{CurrentPlugin, Manifest, Plugin, PluginBuilder, UserData, Val, Wasm
 
 use crate::{
     component::{ComponentParams, HandlerStatus, Logger, MessageDispatcher},
-    ports::{BoolMessage, BytesMessage, FloatMessage, GenericSystemPort, IntMessage, JsonMessage, TextMessage},
-    set_status, with_port,
+    ports::{BoolMessage, BytesMessage, FloatMessage, AnySystemPort, IntMessage, JsonMessage, TextMessage},
+    set_status, with_message_wrapper,
 };
 
-use super::{Component, ComponentMonitor, MonitorCommand};
+use super::{Component, ComponentHandle, ComponentHandleCommand};
 
 // Ports output host function
 
 #[derive(Clone)]
-struct HostCtx { logger: Logger, port: GenericSystemPort, import_name: String }
+struct HostCtx { logger: Logger, port: AnySystemPort, import_name: String }
 
 fn host_emit(plugin: &mut CurrentPlugin, vals: &[Val], _rets: &mut [Val], ctx: UserData<HostCtx>) -> std::result::Result<(), extism::Error> {
     let ctx_arc = ctx.get()?;
     let HostCtx { ref logger, ref port, ref import_name } = *ctx_arc.lock().unwrap();
 
     match port {
-        GenericSystemPort::Int(port) => {
+        AnySystemPort::Int(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
                 logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(&IntMessage::new(msg))?;
+                port.send(IntMessage::new(msg));
             }
         },
-        GenericSystemPort::Float(port) => {
+        AnySystemPort::Float(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
                 logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(&FloatMessage::new(msg))?;
+                port.send(FloatMessage::new(msg));
             }
         },
-        GenericSystemPort::Bool(port) => {
+        AnySystemPort::Bool(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
                 logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(&BoolMessage::new(msg))?;
+                port.send(BoolMessage::new(msg));
             }
         },
-        GenericSystemPort::Bytes(port) => {
+        AnySystemPort::Bytes(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
                 logger.info(&format!("host env::{} -> \"{:?}\"", import_name, msg))?;
-                port.send(&BytesMessage::new(msg))?;
+                port.send(BytesMessage::new(msg));
             }
         },
-        GenericSystemPort::Text(port) => {
+        AnySystemPort::Text(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
                 logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(&TextMessage::new(msg))?;
+                port.send(TextMessage::new(msg));
             }
         },
-        GenericSystemPort::Json(port) => {
+        AnySystemPort::Json(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
                 logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(&JsonMessage::new(msg))?;
+                port.send(JsonMessage::new(msg));
             }
         },
     }
@@ -85,14 +85,14 @@ struct WasmComponentState {
 #[derive(Default)]
 pub struct WasmComponent {
 config: WasmComponentConfig,
-    ports: HashMap<String, GenericSystemPort>,
+    ports: HashMap<String, AnySystemPort>,
 }
 
 impl WasmComponent {}
 
 impl Component for WasmComponent {
-    fn start(self) -> Result<ComponentMonitor> {
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, status| {
+    fn start(self) -> Result<ComponentHandle> {
+        let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, status| {
             // Initialize status
             set_status!(status.wasm, json!({
                 "module": self.config.module,
@@ -131,28 +131,31 @@ impl Component for WasmComponent {
             // Commands
             dispatcher.register(command_receiver, Box::new(|msg, state| {
                 match msg {
-                    MonitorCommand::Stop => {
+                    ComponentHandleCommand::Stop => {
                         logger.info("Stopping WASM component")?;
                         return Ok(HandlerStatus::Stop);
                     }
-                    MonitorCommand::StartStatusUpdates => {
+                    ComponentHandleCommand::StartStatusUpdates => {
                         logger.info("Starting status updates")?;
                         state.update_status = true;
                     }
-                    MonitorCommand::StopStatusUpdates => {
+                    ComponentHandleCommand::StopStatusUpdates => {
                         logger.info("Stopping status updates")?;
                         state.update_status = false;
+                    }
+                    ComponentHandleCommand::SimulatorCommand { command, args } => {
+                        todo!();
                     }
                 }
                 Ok(HandlerStatus::Ok)
             }));
 
             // Register ports handlers
-            for (name, gen_port) in &self.ports {
+            for (name, any_port) in &self.ports {
                 let export_name = format!("{}_in", name);
                 let logger = &logger;
                 let status = &status;
-                with_port!(gen_port, |port| {
+                with_message_wrapper!(AnySystemPort, any_port, |port| {
                     dispatcher.register_system_port(port, Box::new(move |msg, state| {
                         logger.info(&format!("[{}] received input: \"{:?}\"", name, msg.data))?;
 
@@ -175,7 +178,7 @@ impl Component for WasmComponent {
             Ok(())
         });
 
-        Ok(monitor)
+        Ok(handle)
     }
 
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {

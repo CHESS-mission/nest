@@ -2,8 +2,8 @@ use std::time::Instant;
 use serde_json::json;
 
 use nest::{
-    component::{Component, ComponentParams, LogEntry, qemu::QemuComponent, wasm::WasmComponent},
-    ports::{GenericSystemPort, JsonMessage, SystemPort},
+    component::{qemu::QemuComponent, test::TestComponent, wasm::WasmComponent, Component, ComponentParams, LogEntry},
+    ports::{AnySystemPort, JsonMessage, SystemPortBuilder},
 };
 
 fn format_log_entry<S: Into<String>>(component_name: S, entry: &LogEntry, start: Instant) -> String {
@@ -22,11 +22,16 @@ fn format_log_entry<S: Into<String>>(component_name: S, entry: &LogEntry, start:
 
 fn main() {
     // Create and connect ports
-    let mut qemu_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
-    let mut temp_i2c_port: SystemPort<JsonMessage> = SystemPort::default();
+    let mut qemu_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
+    let mut temp_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
+    let mut test_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
 
-    qemu_i2c_port.connect_to(&temp_i2c_port);
-    temp_i2c_port.connect_to(&qemu_i2c_port);
+    qemu_i2c_port_builder.connect_to(&temp_i2c_port_builder);
+    qemu_i2c_port_builder.connect_to(&test_i2c_port_builder);
+    temp_i2c_port_builder.connect_to(&test_i2c_port_builder);
+    temp_i2c_port_builder.connect_to(&qemu_i2c_port_builder);
+    test_i2c_port_builder.connect_to(&qemu_i2c_port_builder);
+    test_i2c_port_builder.connect_to(&temp_i2c_port_builder);
 
     // Instanciate Qemu component
     let mut qemu_params = ComponentParams::new();
@@ -52,7 +57,7 @@ fn main() {
         },
     }));
 
-    qemu_params.add_system_port("i2c", GenericSystemPort::Json(qemu_i2c_port));
+    qemu_params.add_system_port("i2c", AnySystemPort::Json(qemu_i2c_port_builder.build()));
 
     let qemu = QemuComponent::from_params(&qemu_params).unwrap();
 
@@ -62,21 +67,43 @@ fn main() {
         "module": "component_artifacts/sensor_temp.wasm"
     }));
 
-    temp_params.add_system_port("i2c", GenericSystemPort::Json(temp_i2c_port));
+    temp_params.add_system_port("i2c", AnySystemPort::Json(temp_i2c_port_builder.build()));
 
     let temp = WasmComponent::from_params(&temp_params).unwrap();
 
+    // Instantiate Test component
+    let mut test_params = ComponentParams::new();
+    test_params.set_config(json!({
+        "initial_sum": 42,
+        "greeting": "Hey!",
+    }));
+
+    test_params.add_system_port("i2c", AnySystemPort::Json(test_i2c_port_builder.build()));
+
+    let test = TestComponent::from_params(&test_params).unwrap();
+
     // Start components
     let start = Instant::now();
-    let temp_monitor = temp.start().unwrap();
-    let qemu_monitor = qemu.start().unwrap();
+    let temp_handle = temp.start().unwrap();
+    let qemu_handle = qemu.start().unwrap();
+    let test_handle = test.start().unwrap();
+
+    // loop {
+    //     // Print events received from components
+    //     crossbeam_channel::select! {
+    //         recv(temp_handle.event_receiver()) -> entry => println!("TEMP {:?}", &entry.unwrap()),
+    //         recv(qemu_handle.event_receiver()) -> entry => println!("QEMU {:?}", &entry.unwrap()),
+    //         recv(test_handle.event_receiver()) -> entry => println!("TEST {:?}", &entry.unwrap()),
+    //     }
+    // }
 
     // Infinite loop
     loop {
         // Print logs received from components
         crossbeam_channel::select! {
-            recv(temp_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("TEMP", &entry.unwrap(), start)),
-            recv(qemu_monitor.log_receiver()) -> entry => println!("{}", format_log_entry("QEMU", &entry.unwrap(), start)),
+            recv(temp_handle.log_receiver()) -> entry => println!("{}", format_log_entry("TEMP", &entry.unwrap(), start)),
+            recv(qemu_handle.log_receiver()) -> entry => println!("{}", format_log_entry("QEMU", &entry.unwrap(), start)),
+            recv(test_handle.log_receiver()) -> entry => println!("{}", format_log_entry("TEST", &entry.unwrap(), start)),
         }
     }
 }

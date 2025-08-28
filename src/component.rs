@@ -5,25 +5,25 @@ pub mod test;
 use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Instant};
 
 use anyhow::{anyhow, Result};
-use crossbeam_channel::{unbounded, Receiver, Select, Sender};
+use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
 use serde_json::Value;
 
-use crate::ports::{GenericSystemPort, Message, SystemPort};
+use crate::ports::{AnyEnvironmentPort, AnySystemPort, Message, SystemPort};
 
 // Component
 
 /// Trait implemented by components.
 ///
 /// The start method is called by the simulator to start executing the component and returns a
-/// [ComponentMonitor].
+/// [ComponentHandle].
 ///
 /// The from_params method must allow creating new instances of the component from a
 /// [ComponentParams].
 pub trait Component: Send {
     /// Start executing the component on a new thread.
     ///
-    /// Return a [ComponentMonitor] with a handle to the spawned thread.
-    fn start(self) -> Result<ComponentMonitor>;
+    /// Return a [ComponentHandle] with a handle to the spawned thread.
+    fn start(self) -> Result<ComponentHandle>;
 
     /// Creates a new instance of the component from a [ComponentParams].
     /// The method should return an error if invalid parameter are passed.
@@ -36,13 +36,14 @@ pub trait Component: Send {
 #[derive(Debug)]
 pub struct ComponentParams {
     config: serde_json::Value,
-    system_ports: HashMap<String, GenericSystemPort>,
+    system_ports: HashMap<String, AnySystemPort>,
+    env_ports: HashMap<String, AnyEnvironmentPort>,
 }
 
 impl ComponentParams {
     /// Create a new empty [ComponentParams].
     pub fn new() -> Self {
-        Self { config: serde_json::Value::Null, system_ports: HashMap::new() }
+        Self { config: serde_json::Value::Null, system_ports: HashMap::new(), env_ports: HashMap::new() }
     }
     
     /// Get a reference to the config from the parameters.
@@ -60,24 +61,44 @@ impl ComponentParams {
         self.config = config
     }
     
-    /// Get a [GenericSystemPort] from the parameters if it exists.
-    pub fn add_system_port<K: Into<String>>(&mut self, key: K, port: GenericSystemPort) {
+    /// Get a [AnySystemPort] from the parameters if it exists.
+    pub fn add_system_port<K: Into<String>>(&mut self, key: K, port: AnySystemPort) {
         self.system_ports.insert(key.into(), port);
     }
     
-    /// Get a [GenericSystemPort] from the parameters if it exists.
-    pub fn system_port(&self, key: &str) -> Option<&GenericSystemPort> {
+    /// Get a [AnySystemPort] from the parameters if it exists.
+    pub fn system_port(&self, key: &str) -> Option<&AnySystemPort> {
         self.system_ports.get(key)
     }
     
-    /// Get a mutable reference to a [GenericSystemPort] from the parameters if it exists.
-    pub fn system_port_mut(&mut self, key: &str) -> Option<&mut GenericSystemPort> {
+    /// Get a mutable reference to a [AnySystemPort] from the parameters if it exists.
+    pub fn system_port_mut(&mut self, key: &str) -> Option<&mut AnySystemPort> {
         self.system_ports.get_mut(key)
     }
     
-    /// Get a vector of all system port key-value pairs from the parameters.
-    pub fn system_ports(&self) -> Vec<(&String, &GenericSystemPort)> {
+    /// Get a vector of all [AnySystemPort] key-value pairs from the parameters.
+    pub fn system_ports(&self) -> Vec<(&String, &AnySystemPort)> {
         self.system_ports.iter().collect()
+    }
+    
+    /// Get a [AnyEnvironmentPort] from the parameters if it exists.
+    pub fn add_env_port<K: Into<String>>(&mut self, key: K, port: AnyEnvironmentPort) {
+        self.env_ports.insert(key.into(), port);
+    }
+    
+    /// Get a [AnyEnvironmentPort] from the parameters if it exists.
+    pub fn env_port(&self, key: &str) -> Option<&AnyEnvironmentPort> {
+        self.env_ports.get(key)
+    }
+    
+    /// Get a mutable reference to a [AnyEnvironmentPort] from the parameters if it exists.
+    pub fn env_port_mut(&mut self, key: &str) -> Option<&mut AnyEnvironmentPort> {
+        self.env_ports.get_mut(key)
+    }
+    
+    /// Get a vector of all [AnyEnvironmentPort] key-value pairs from the parameters.
+    pub fn env_ports(&self) -> Vec<(&String, &AnyEnvironmentPort)> {
+        self.env_ports.iter().collect()
     }
 }
 
@@ -123,7 +144,15 @@ impl<'a, S: 'a> MessageDispatcher<'a, S> {
         loop {
             // Wait until a receive operation becomes ready and handle it
             let index = sel.ready();
-            let status = self.message_handlers[index].handle(&mut state)?;
+            let status = match self.message_handlers[index].handle(&mut state) {
+                Ok(status) => status,
+                Err(HandlerError::Callback(error)) => return Err(error),
+                Err(HandlerError::Disconnected) => {
+                    // Remove disconnected receivers
+                    sel.remove(index);
+                    HandlerStatus::Ok
+                },
+            };
 
             // Shut down dispatcher if status is Stop
             if let HandlerStatus::Stop = status { return Ok(()) }
@@ -139,9 +168,17 @@ pub enum HandlerStatus {
     Stop,
 }
 
+#[derive(thiserror::Error, Debug)]
+enum HandlerError {
+    #[error("callback failed: {0}")]
+    Callback(#[from] anyhow::Error),
+    #[error("channel disconnected")]
+    Disconnected,
+}
+
 trait MessageHandler<S>: Send {
     fn register<'s, 'h>(&'h self, sel: &mut Select<'s>) where 'h: 's;
-    fn handle(&self, state: &mut S) -> Result<HandlerStatus>;
+    fn handle(&self, state: &mut S) -> Result<HandlerStatus, HandlerError>;
 }
 
 struct TypedMessageHandler<'a, T, S> {
@@ -163,10 +200,13 @@ impl<'a, T: Send + 'static, S> MessageHandler<S> for TypedMessageHandler<'a, T, 
         sel.recv(&self.receiver);
     }
 
-    fn handle(&self, state: &mut S) -> Result<HandlerStatus> {
-        match self.receiver.recv() {
-            Ok(msg) => (self.callback)(msg, state),
-            Err(e) => Err(e.into()),
+    fn handle(&self, state: &mut S) -> Result<HandlerStatus, HandlerError> {
+        match self.receiver.try_recv() {
+            Ok(msg) => (self.callback)(msg, state).map_err(HandlerError::Callback),
+            Err(e) => match e {
+                TryRecvError::Empty => Ok(HandlerStatus::Ok),
+                TryRecvError::Disconnected => Err(HandlerError::Disconnected),
+            },
         }
     }
 }
@@ -202,7 +242,7 @@ impl LogEntry {
     }
 }
 
-/// Convenience object for components to send logs to their [ComponentMonitor].
+/// Convenience object for components to send logs to their [ComponentHandle].
 #[derive(Clone, Debug)]
 pub struct Logger {
     tx: Sender<LogEntry>,
@@ -233,63 +273,92 @@ impl Logger {
     }
 }
 
-// ComponentMonitor
+// ComponentHandle
 
-/// A handle to monitor the execution of a [Component]. It allows to send commands (see [MonitorCommand]),
+/// A handle to control the execution of a [Component]. It allows to send commands (see [ComponentHandleCommand]),
 /// receive logs (see [LogEntry]) and read the component's status.
 #[derive(Debug)]
-pub struct ComponentMonitor {
+pub struct ComponentHandle {
     join_handle: JoinHandle<Result<()>>,
-    command_sender: Sender<MonitorCommand>,
+    command_sender: Sender<ComponentHandleCommand>,
+    event_receiver: Receiver<ComponentEvent>,
     log_receiver: Receiver<LogEntry>,
     shared_status: Arc<Mutex<Value>>,
 }
 
-impl ComponentMonitor {
-    /// Create a new [ComponentMonitor] from the handle of the component's thread, a command
+impl ComponentHandle {
+    /// Create a new [ComponentHandle] from the handle of the component's thread, a command
     /// sender, a log receiver and the shared status object of the component.
-    pub fn new(join_handle: JoinHandle<Result<()>>, command_sender: Sender<MonitorCommand>, log_receiver: Receiver<LogEntry>, shared_status: Arc<Mutex<Value>>) -> Self {
-        Self { join_handle, command_sender, log_receiver, shared_status }
+    pub fn new(
+        join_handle: JoinHandle<Result<()>>,
+        command_sender: Sender<ComponentHandleCommand>,
+        event_receiver: Receiver<ComponentEvent>,
+        log_receiver: Receiver<LogEntry>,
+        shared_status: Arc<Mutex<Value>>) -> Self
+    {
+        Self { join_handle, command_sender, event_receiver, log_receiver, shared_status }
     }
 
-    /// Spawn the function `f` on a separate thread and returns a new [ComponentMonitor] to monitor
+    /// Spawn the function `f` on a separate thread and returns a new [ComponentHandle] to handle
     /// it. The function `f` receives the command receiver, [Logger], and shared status reference as
     /// arguments.
-    pub fn start_monitor<F>(f: F) -> Self
+    pub fn start<F>(f: F) -> Self
     where
-        F: FnOnce(Receiver<MonitorCommand>, Logger, Arc<Mutex<Value>>) -> Result<()>,
+        F: FnOnce(Receiver<ComponentHandleCommand>, Sender<ComponentEvent>, Logger, Arc<Mutex<Value>>) -> Result<()>,
         F: Send + 'static,
     {
         let (command_tx, command_rx) = unbounded();
+        let (event_tx, event_rx) = unbounded();
         let (log_tx, log_rx) = unbounded();
         let status = Arc::new(Mutex::new(Value::Null));
         let status_clone = status.clone();
-        let handle = thread::spawn(|| f(command_rx, Logger::new(log_tx), status_clone));
-        ComponentMonitor::new(handle, command_tx, log_rx, status)
+        let handle = thread::spawn(move || {
+            if let Err(e) = f(command_rx, event_tx.clone(), Logger::new(log_tx), status_clone) {
+                event_tx.send(ComponentEvent::Error(e.to_string()))?;
+            }
+            Ok(())
+        });
+        ComponentHandle::new(handle, command_tx, event_rx, log_rx, status)
     }
 
-    /// Signal the component to stop. Note that the command will be queued and the component might
+    /// Request the component to stop. Note that the command will be queued and the component might
     /// not instantly stop.
     pub fn stop(self) -> Result<()> {
-        self.command_sender.send(MonitorCommand::Stop)?;
+        self.command_sender.send(ComponentHandleCommand::Stop)?;
         self.join_handle.join().unwrap().unwrap();
         Ok(())
     }
 
-    /// Signal the component to start updating its status. Most component do not update their status
-    /// by default for performance reasons. Note that the command will be queued and might not
-    /// immediately take effect.
+    /// Request the component to start updating its status. Components are expected to not update
+    /// their status by default for performance reasons. Note that the command will be queued and
+    /// might not immediately take effect.
     pub fn start_status_updates(&self) -> Result<()> {
-        self.command_sender.send(MonitorCommand::StartStatusUpdates)?;
+        self.command_sender.send(ComponentHandleCommand::StartStatusUpdates)?;
         Ok(())
     }
 
-    /// Signal the component to stop updating its status. Most component do not update their status
-    /// by default for performance reasons. Note that the command will be queued and might not
-    /// immediately take effect.
+    /// Request the component to stop updating its status. Components are expected to not update
+    /// their status by default for performance reasons. Note that the command will be queued and
+    /// might not immediately take effect.
     pub fn stop_status_updates(&self) -> Result<()> {
-        self.command_sender.send(MonitorCommand::StopStatusUpdates)?;
+        self.command_sender.send(ComponentHandleCommand::StopStatusUpdates)?;
         Ok(())
+    }
+
+    /// Issue a simulator command to the component.
+    pub fn simulator_command<S: Into<String>>(&self, command: S, args: serde_json::Value) -> Result<()> {
+        self.command_sender.send(ComponentHandleCommand::SimulatorCommand { command: command.into(), args })?;
+        Ok(())
+    }
+
+    /// Return a reference to the handle's event receiver. Can be cloned safely.
+    pub fn event_receiver(&self) -> &Receiver<ComponentEvent> {
+        &self.event_receiver
+    }
+
+    /// Return a reference to the handle's log receiver. Can be cloned safely.
+    pub fn log_receiver(&self) -> &Receiver<LogEntry> {
+        &self.log_receiver
     }
 
     /// Read the component status and return a copy. Requires cloning but keeps the lock for the
@@ -305,20 +374,60 @@ impl ComponentMonitor {
     pub fn status_shared(&self) -> Arc<Mutex<Value>> {
         Arc::clone(&self.shared_status)
     }
+}
 
-    /// Return a reference to the monitor's log receiver. Can be cloned safely.
-    pub fn log_receiver(&self) -> &Receiver<LogEntry> {
-        &self.log_receiver
+/// Command sent from a [ComponentHandle] to a [Component].
+#[derive(Clone, Debug)]
+pub enum ComponentHandleCommand {
+    /// Requests the component to stop.
+    Stop,
+    /// Requests the component to start updating its status.
+    StartStatusUpdates,
+    /// Requests the component to stop updating its status.
+    StopStatusUpdates,
+    /// Issues a simulator command to the component.
+    SimulatorCommand { command: String, args: serde_json::Value },
+}
+
+impl ComponentHandleCommand {
+    /// Create a new [ComponentHandleCommand::SimulatorCommand].
+    pub fn sim_command<C, A>(command: C, args: A) -> Self
+    where
+        C: Into<String>,
+        A: Into<Value>,
+    {
+        Self::SimulatorCommand {
+            command: command.into(),
+            args: args.into(),
+        }
     }
 }
 
-/// Command sent from a [ComponentMonitor] to a [Component].
+/// Event sent from a [Component] to a [ComponentHandle].
 #[derive(Clone, Debug)]
-pub enum MonitorCommand {
-    /// Signals the component to stop.
-    Stop,
-    /// Signals the component to start updating its status.
-    StartStatusUpdates,
-    /// Signals the component to stop updating its status.
-    StopStatusUpdates,
+pub enum ComponentEvent {
+    /// Signals an unrecoverable error to the component handle. The component is expected to
+    /// immediately stop after sending a [ComponentEvent::Error].
+    Error(String),
+    /// Reports a simulation event to the simulator.
+    SimulationEvent { event: String, value: serde_json::Value },
+}
+
+impl ComponentEvent {
+    /// Create a new [ComponentEvent::Error].
+    pub fn error<E: Into<String>>(error: E) -> Self {
+        Self::Error(error.into())
+    }
+
+    /// Create a new [ComponentEvent::SimulationEvent].
+    pub fn sim_event<E, V>(event: E, value: V) -> Self
+    where
+        E: Into<String>,
+        V: Into<Value>,
+    {
+        Self::SimulationEvent {
+            event: event.into(),
+            value: value.into(),
+        }
+    }
 }

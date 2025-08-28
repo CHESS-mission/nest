@@ -14,7 +14,7 @@ use crate::{
     component::{
         qemu::{
             gpio::{messaging::GpioEvent, start_gpio_backend, GpioLine}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}
-        }, Component, ComponentMonitor, ComponentParams, HandlerStatus, MessageDispatcher, MonitorCommand
+        }, Component, ComponentHandle, ComponentParams, HandlerStatus, MessageDispatcher, ComponentHandleCommand
     },
     ports::{BoolMessage, JsonMessage, SystemPort},
 };
@@ -90,7 +90,7 @@ impl QemuComponent {
 }
 
 impl Component for QemuComponent {
-    fn start(self) -> Result<ComponentMonitor> {
+    fn start(self) -> Result<ComponentHandle> {
         // Create gpio socket
         let gpio_socket = self.config.gpio_socket.as_ref().map(PathBuf::from).unwrap_or_else(||
             std::env::temp_dir().join(format!("vgpio-{}.sock", uuid::Uuid::new_v4()))
@@ -107,15 +107,18 @@ impl Component for QemuComponent {
         // Start i2c backend
         let i2c_backend_handle = start_i2c_backend(&i2c_socket, Duration::from_millis(self.config.i2c_timeout_ms));
 
-        let monitor = ComponentMonitor::start_monitor(move |command_receiver, logger, _status| {
+        let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, _status| {
             let mut dispatcher = MessageDispatcher::<QemuComponentState>::new();
 
             // Register command receiver handler
             dispatcher.register(command_receiver, Box::new(|msg, state| {
                 match msg {
-                    MonitorCommand::Stop => return Ok(HandlerStatus::Stop),
-                    MonitorCommand::StartStatusUpdates => state.update_status = true,
-                    MonitorCommand::StopStatusUpdates => state.update_status = false,
+                    ComponentHandleCommand::Stop => return Ok(HandlerStatus::Stop),
+                    ComponentHandleCommand::StartStatusUpdates => state.update_status = true,
+                    ComponentHandleCommand::StopStatusUpdates => state.update_status = false,
+                    ComponentHandleCommand::SimulatorCommand { command, args } => {
+                        todo!();
+                    }
                 }
 
                 Ok(HandlerStatus::Ok)
@@ -129,7 +132,7 @@ impl Component for QemuComponent {
                 };
 
                 if let Some(port) = self.gpio_ports.get(line as usize) {
-                    port.send(&BoolMessage::new(value))?;
+                    port.send(BoolMessage::new(value));
                 } else {
                     logger.error(&format!("GPIO line out of range: {}", line))?;
                 }
@@ -159,14 +162,14 @@ impl Component for QemuComponent {
             // Register i2c backend requests handler
             dispatcher.register(i2c_backend_handle.request_rx, Box::new(|req, _state| {
                 let i2c_request = serde_json::to_value(req)?;
-                self.i2c_port.send(&JsonMessage::new(i2c_request))?;
+                self.i2c_port.send(JsonMessage::new(i2c_request));
 
                 Ok(HandlerStatus::Ok)
             }));
 
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|resp, _state| {
-                let i2c_response = serde_json::from_value::<I2cResponse>(resp.data);
+                let i2c_response = serde_json::from_value::<I2cTransaction>(resp.data);
                 match i2c_response {
                     Ok(response) => i2c_backend_handle.response_tx.send(response)?,
                     Err(_) => logger.error("Bad json received on i2c port")?,
@@ -205,7 +208,7 @@ impl Component for QemuComponent {
             Ok(())
         });
 
-        Ok(monitor)
+        Ok(handle)
     }
 
     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {

@@ -28,7 +28,7 @@ use vmm_sys_util::{
 };
 
 use crate::component::qemu::i2c::{
-    messaging::{I2cOperation, I2cRequest, I2cResponse},
+    messaging::{I2cOperation, I2cResponse, I2cTransaction},
     virtio::{
         I2cDescriptorChain, VIRTIO_I2C_F_ZERO_LENGTH_REQUEST, VIRTIO_I2C_FLAGS_M_RD,
         VIRTIO_I2C_MSG_ERR, VIRTIO_I2C_MSG_OK, VirtioI2cInHdr, VirtioI2cOutHdr,
@@ -63,7 +63,7 @@ pub enum I2cError {
     #[error("Failed to create new EventFd")]
     EventFdFailed,
     #[error("Couldn't send i2c message to the simulated device: {0}")]
-    SendError(#[from] crossbeam_channel::SendError<I2cRequest>),
+    SendError(#[from] crossbeam_channel::SendError<I2cTransaction>),
     #[error("Couldn't start the vhost-user i2c backend daemon")]
     StartBackendFailed,
 }
@@ -81,14 +81,14 @@ pub struct VhostUserI2cBackend {
     event_idx: bool,
     pub exit_event: EventFd,
     mem: Option<GuestMemoryLoadGuard<GuestMemoryMmap>>,
-    request_tx: Sender<I2cRequest>,
-    response_rx: Receiver<I2cResponse>,
+    request_tx: Sender<I2cTransaction>,
+    response_rx: Receiver<I2cTransaction>,
     timeout: Duration,
 }
 
 impl VhostUserI2cBackend {
     /// Create a new [VhostUserI2cBackend].
-    pub fn new(request_tx: Sender<I2cRequest>, response_rx: Receiver<I2cResponse>, timeout: Duration) -> Result<Self> {
+    pub fn new(request_tx: Sender<I2cTransaction>, response_rx: Receiver<I2cTransaction>, timeout: Duration) -> Result<Self> {
         Ok(Self {
             event_idx: false,
             exit_event: EventFd::new(EFD_NONBLOCK).map_err(|_| I2cError::EventFdFailed)?,
@@ -105,7 +105,7 @@ impl VhostUserI2cBackend {
         requests: Vec<I2cDescriptorChain>,
         vring: &VringRwLock,
     ) -> Result<bool> {
-        let mut reqs: Vec<I2cRequest> = Vec::new();
+        let mut reqs: Vec<I2cTransaction> = Vec::new();
 
         if requests.is_empty() {
             return Ok(true);
@@ -182,7 +182,7 @@ impl VhostUserI2cBackend {
                 _ => (Vec::<u8>::new(), 0),
             };
 
-            reqs.push(I2cRequest {
+            reqs.push(I2cTransaction::Request {
                 addr: out_hdr.addr.to_native() >> 1,
                 op: match i2c_m_rd {
                     true => I2cOperation::Read(len as usize),
@@ -216,7 +216,7 @@ impl VhostUserI2cBackend {
                 let desc_buf = descriptors[1];
 
                 // Write the data read from the I2C device
-                if let Ok(I2cResponse::Read(buf)) = &responses[i] {
+                if let Ok(I2cTransaction::Response(I2cResponse::Read(buf))) = &responses[i] {
                     desc_chain
                         .memory()
                         .write(buf, desc_buf.addr())
@@ -348,9 +348,9 @@ pub struct I2cBackendHandle {
     /// Handle of the backend thread.
     pub join_handle: JoinHandle<Result<()>>,
     /// Receives requests from the guest.
-    pub request_rx: Receiver<I2cRequest>,
+    pub request_rx: Receiver<I2cTransaction>,
     /// Sends responses back to the guest.
-    pub response_tx: Sender<I2cResponse>,
+    pub response_tx: Sender<I2cTransaction>,
 }
 
 /// Start the vhost-user i2c backend daemon.
@@ -396,23 +396,7 @@ pub mod messaging {
         Read(usize),
     }
 
-    /// A request sent from the [VhostUserI2cBackend] to the simulated device.
-    #[derive(Debug, Clone)]
-    #[derive(Serialize, Deserialize)]
-    pub struct I2cRequest {
-        /// The 7-bit I2C device address.
-        pub addr: u16,
-        /// The operation of this transaction.
-        pub op: I2cOperation,
-    }
-
-    impl I2cRequest {
-        pub fn is_read(&self) -> bool {
-            matches!(self.op, I2cOperation::Read(_))
-        }
-    }
-
-    /// A response sent from the simulated device back to the [VhostUserI2cBackend].
+    /// A response sent from the simulated device back to the I2C backend.
     #[derive(Debug, Clone)]
     #[derive(Serialize, Deserialize)]
     pub enum I2cResponse {
@@ -420,6 +404,18 @@ pub mod messaging {
         Write,
         /// A read response, with the content read from the device.
         Read(Vec<u8>),
+    }
+
+    /// Represents an I2C transaction (request or response).
+    #[derive(Debug, Clone)]
+    #[derive(Serialize, Deserialize)]
+    pub enum I2cTransaction {
+        /// A request sent from the I2C backend to the simulated device.
+        /// - `addr`: The 7-bit I2C device address.
+        /// - `op`: The operation to perform.
+        Request { addr: u16, op: I2cOperation },
+        /// A response sent from the simulated device back to the I2C backend.
+        Response(I2cResponse),
     }
 }
 

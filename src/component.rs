@@ -23,7 +23,7 @@ pub trait Component: Send {
     /// Start executing the component on a new thread.
     ///
     /// Return a [ComponentHandle] with a handle to the spawned thread.
-    fn start(self) -> Result<ComponentHandle>;
+    fn start(self: Box<Self>) -> Result<ComponentHandle>;
 
     /// Creates a new instance of the component from a [ComponentParams].
     /// The method should return an error if invalid parameter are passed.
@@ -237,8 +237,8 @@ pub struct LogEntry {
 
 impl LogEntry {
     /// Create a new log entry.
-    pub fn new(level: LogLevel, timestamp: Instant, message: String) -> Self {
-        Self { level, timestamp, message }
+    pub fn new<S: Into<String>>(level: LogLevel, message: S) -> Self {
+        Self { level, timestamp: Instant::now(), message: message.into() }
     }
 }
 
@@ -255,20 +255,20 @@ impl Logger {
     }
 
     /// Log information message.
-    pub fn info(&self, message: &str) -> Result<()> {
-        self.tx.send(LogEntry::new(LogLevel::Info, Instant::now(), message.to_string()))?;
+    pub fn info<S: Into<String>>(&self, message: S) -> Result<()> {
+        self.tx.send(LogEntry::new(LogLevel::Info, message))?;
         Ok(())
     }
 
     /// Log warning message.
-    pub fn warning(&self, message: &str) -> Result<()> {
-        self.tx.send(LogEntry::new(LogLevel::Warning, Instant::now(), message.to_string()))?;
+    pub fn warning<S: Into<String>>(&self, message: S) -> Result<()> {
+        self.tx.send(LogEntry::new(LogLevel::Warning, message))?;
         Ok(())
     }
 
     /// Log error message.
-    pub fn error(&self, message: &str) -> Result<()> {
-        self.tx.send(LogEntry::new(LogLevel::Error, Instant::now(), message.to_string()))?;
+    pub fn error<S: Into<String>>(&self, message: S) -> Result<()> {
+        self.tx.send(LogEntry::new(LogLevel::Error, message))?;
         Ok(())
     }
 }

@@ -1,12 +1,11 @@
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 use serde_json::json;
 
-use nest::{
-    component::{qemu::QemuComponent, test::TestComponent, wasm::WasmComponent, Component, ComponentParams, LogEntry},
-    ports::{AnySystemPort, JsonMessage, SystemPortBuilder},
-};
+use nest::{component::LogEntry, 
+    simulation::{ComponentKind, PortType, RawComponent, SimulationBuilder, Topology, Wire, WireEndpoint}, simulator::Simulator}
+;
 
-fn format_log_entry<S: Into<String>>(component_name: S, entry: &LogEntry, start: Instant) -> String {
+fn format_log_entry(name: &str, entry: &LogEntry, start: Instant) -> String {
     let elapsed = entry.timestamp.duration_since(start);
 
     let total_secs = elapsed.as_secs();
@@ -17,93 +16,70 @@ fn format_log_entry<S: Into<String>>(component_name: S, entry: &LogEntry, start:
 
     let time = format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis);
 
-    format!("{}: [{:?}] [{}] {}", time, entry.level, component_name.into(), entry.message)
+    format!("{}: [{:?}] [{}] {}", time, entry.level, name, entry.message)
 }
 
 fn main() {
-    // Create and connect ports
-    let mut qemu_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
-    let mut temp_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
-    let mut test_i2c_port_builder: SystemPortBuilder<JsonMessage> = SystemPortBuilder::default();
+    // Define components
+    let mut raw_components: HashMap<String, RawComponent> = HashMap::new();
 
-    qemu_i2c_port_builder.connect_to(&temp_i2c_port_builder);
-    qemu_i2c_port_builder.connect_to(&test_i2c_port_builder);
-    temp_i2c_port_builder.connect_to(&test_i2c_port_builder);
-    temp_i2c_port_builder.connect_to(&qemu_i2c_port_builder);
-    test_i2c_port_builder.connect_to(&qemu_i2c_port_builder);
-    test_i2c_port_builder.connect_to(&temp_i2c_port_builder);
+    raw_components.insert("QEMU".into(), RawComponent::new(
+        ComponentKind::Qemu,
+        json!({
+            "arch": "arm",
+            "mem_mb": 1024,
+            "options": [
+                { "option": "cpu", "value": "cortex-a7" },
+                { "option": "M", "value": "virt" },
+                { "option": "kernel", "value": "./image/zImage" },
+                { "option": "append", "value": "rootwait root=/dev/vda console=ttyAMA0" },
+                { "option": "drive", "value": "if=none,file=./image/disk.qcow2,id=hd0" },
+                { "option": "device", "value": "virtio-blk-device,drive=hd0" },
+                { "option": "serial", "value": "pty:/tmp/qemu-serial-pty" },
+                { "option": "nographic" },
+            ],
+            "i2c_timeout_ms": 10,
+            "ngpio": 8,
+            "gpio_names": {
+                "5": "echo_out",
+                "7": "echo_in",
+            },
+        }),
+        vec![("i2c".into(), PortType::Json)],
+        vec![],
+    ));
 
-    // Instanciate Qemu component
-    let mut qemu_params = ComponentParams::new();
+    raw_components.insert("TEMP".into(), RawComponent::new(
+        ComponentKind::Wasm,
+        json!({
+            "module": "component_artifacts/sensor_temp.wasm"
+        }),
+        vec![("i2c".into(), PortType::Json)],
+        vec![],
+    ));
 
-    qemu_params.set_config(json!({
-        "arch": "arm",
-        "mem_mb": 1024,
-        "options": [
-            { "option": "cpu", "value": "cortex-a7" },
-            { "option": "M", "value": "virt" },
-            { "option": "kernel", "value": "./image/zImage" },
-            { "option": "append", "value": "rootwait root=/dev/vda console=ttyAMA0" },
-            { "option": "drive", "value": "if=none,file=./image/disk.qcow2,id=hd0" },
-            { "option": "device", "value": "virtio-blk-device,drive=hd0" },
-            { "option": "serial", "value": "pty:/tmp/qemu-serial-pty" },
-            { "option": "nographic" },
-        ],
-        "i2c_timeout_ms": 10,
-        "ngpio": 8,
-        "gpio_names": {
-            "5": "echo_out",
-            "7": "echo_in",
-        },
-    }));
+    // Define wires
+    let mut wires: Vec<Wire> = Vec::new();
 
-    qemu_params.add_system_port("i2c", AnySystemPort::Json(qemu_i2c_port_builder.build()));
+    wires.push(Wire::new(
+        vec![
+            WireEndpoint::new("QEMU", "i2c"),
+            WireEndpoint::new("TEMP", "i2c"),
+        ]
+    ));
 
-    let qemu = QemuComponent::from_params(&qemu_params).unwrap();
+    // Setup & start simulation
+    let topology = Topology::new(raw_components, wires);
+    let mut simulator = Simulator::new();
+    simulator.load_topology(topology).unwrap();
+    simulator.start().unwrap();
 
-    // Instantiate Temp component
-    let mut temp_params = ComponentParams::new();
-    temp_params.set_config(json!({
-        "module": "component_artifacts/sensor_temp.wasm"
-    }));
-
-    temp_params.add_system_port("i2c", AnySystemPort::Json(temp_i2c_port_builder.build()));
-
-    let temp = WasmComponent::from_params(&temp_params).unwrap();
-
-    // Instantiate Test component
-    let mut test_params = ComponentParams::new();
-    test_params.set_config(json!({
-        "initial_sum": 42,
-        "greeting": "Hey!",
-    }));
-
-    test_params.add_system_port("i2c", AnySystemPort::Json(test_i2c_port_builder.build()));
-
-    let test = TestComponent::from_params(&test_params).unwrap();
-
-    // Start components
-    let start = Instant::now();
-    let temp_handle = temp.start().unwrap();
-    let qemu_handle = qemu.start().unwrap();
-    let test_handle = test.start().unwrap();
-
-    // loop {
-    //     // Print events received from components
-    //     crossbeam_channel::select! {
-    //         recv(temp_handle.event_receiver()) -> entry => println!("TEMP {:?}", &entry.unwrap()),
-    //         recv(qemu_handle.event_receiver()) -> entry => println!("QEMU {:?}", &entry.unwrap()),
-    //         recv(test_handle.event_receiver()) -> entry => println!("TEST {:?}", &entry.unwrap()),
-    //     }
-    // }
+    let log_receiver = simulator.log_receiver().unwrap();
 
     // Infinite loop
     loop {
         // Print logs received from components
-        crossbeam_channel::select! {
-            recv(temp_handle.log_receiver()) -> entry => println!("{}", format_log_entry("TEMP", &entry.unwrap(), start)),
-            recv(qemu_handle.log_receiver()) -> entry => println!("{}", format_log_entry("QEMU", &entry.unwrap(), start)),
-            recv(test_handle.log_receiver()) -> entry => println!("{}", format_log_entry("TEST", &entry.unwrap(), start)),
-        }
+        let (name, entry) = &log_receiver.recv();
+        println!("{}", format_log_entry(name, entry, simulator.started_time().unwrap()));
     }
 }

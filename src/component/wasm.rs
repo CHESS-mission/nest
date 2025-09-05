@@ -24,37 +24,37 @@ fn host_emit(plugin: &mut CurrentPlugin, vals: &[Val], _rets: &mut [Val], ctx: U
     match port {
         AnySystemPort::Int(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
+                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
                 port.send(IntMessage::new(msg));
             }
         },
         AnySystemPort::Float(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
+                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
                 port.send(FloatMessage::new(msg));
             }
         },
         AnySystemPort::Bool(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
+                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
                 port.send(BoolMessage::new(msg));
             }
         },
         AnySystemPort::Bytes(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(&format!("host env::{} -> \"{:?}\"", import_name, msg))?;
+                logger.info(format!("host env::{} -> \"{:?}\"", import_name, msg))?;
                 port.send(BytesMessage::new(msg));
             }
         },
         AnySystemPort::Text(port) => {
-            if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
+            if let Ok(msg) = plugin.memory_get_val::<&str>(&vals[0]) {
+                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
                 port.send(TextMessage::new(msg));
             }
         },
         AnySystemPort::Json(port) => {
             if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(&format!("host env::{} -> \"{}\"", import_name, msg))?;
+                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
                 port.send(JsonMessage::new(msg));
             }
         },
@@ -91,7 +91,7 @@ config: WasmComponentConfig,
 impl WasmComponent {}
 
 impl Component for WasmComponent {
-    fn start(self) -> Result<ComponentHandle> {
+    fn start(self: Box<Self>) -> Result<ComponentHandle> {
         let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, status| {
             // Initialize status
             set_status!(status.wasm, json!({
@@ -121,7 +121,7 @@ impl Component for WasmComponent {
             let plugin = match builder.build() {
                 Ok(p) => p,
                 Err(e) => {
-                    logger.error(&format!("failed to build WASM plugin: {}", e))?;
+                    logger.error(format!("failed to build WASM plugin: {}", e))?;
                     return Ok(());
                 }
             };
@@ -157,16 +157,16 @@ impl Component for WasmComponent {
                 let status = &status;
                 with_message_wrapper!(AnySystemPort, any_port, |port| {
                     dispatcher.register_system_port(port, Box::new(move |msg, state| {
-                        logger.info(&format!("[{}] received input: \"{:?}\"", name, msg.data))?;
+                        logger.info(format!("[{}] received input: \"{:?}\"", name, msg.data))?;
 
                         match state.plugin.call::<_, String>(&export_name, &msg.data) {
                             Ok(result) => {
                                 if state.update_status {
                                     set_status!(status.last.name, json!({ "in": msg.data, "out": result }))?;
                                 }
-                                logger.info(&format!("export '{}' completed; out=\"{}\"", export_name, result))?;
+                                logger.info(format!("export '{}' completed; out=\"{}\"", export_name, result))?;
                             }
-                            Err(e) => { logger.error(&format!("export '{}' failed: {}", export_name, e))?; }
+                            Err(e) => { logger.error(format!("export '{}' failed: {}", export_name, e))?; }
                         }
                         Ok(HandlerStatus::Ok)
                     }));

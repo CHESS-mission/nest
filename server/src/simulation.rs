@@ -1,11 +1,12 @@
 use std::{collections::HashMap};
 
 use anyhow::{Result, bail};
+use api::{ComponentKind, PortType, Topology};
 use crossbeam_channel::{Receiver, Select, TryRecvError};
 
 use crate::{
     component::{
-        qemu::QemuComponent, wasm::WasmComponent, Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, LogLevel
+        qemu::QemuComponent, wasm::WasmComponent, Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry
     },
     ports::{AnySystemPortBuilder, SystemPortBuilder},
 };
@@ -154,25 +155,38 @@ impl<T> SimulationReceiver<T> {
         Self { receivers }
     }
 
-    pub fn recv(&self) -> (String, T) {
+    pub fn recv(&mut self) -> Option<(String, T)> {
         let mut sel = Select::new();
 
         for (_source, receiver) in &self.receivers {
             sel.recv(receiver);
         }
 
-        loop {
+        let mut disconnected = Vec::new();
+        let msg = loop {
+            if disconnected.len() >= self.receivers.len() { break None }
             let index = sel.ready();
             let (source, receiver) = &self.receivers[index];
 
             match receiver.try_recv() {
-                Ok(msg) => return (source.into(), msg),
+                Ok(msg) => break Some((source.into(), msg)),
                 Err(TryRecvError::Empty) => continue,
-                Err(TryRecvError::Disconnected) => sel.remove(index),
+                Err(TryRecvError::Disconnected) => {
+                    disconnected.push(index);
+                    sel.remove(index);
+                }
             }
+        };
+
+        disconnected.sort_unstable_by(|a, b| b.cmp(a));
+        for i in disconnected {
+            self.receivers.swap_remove(i);
         }
+
+        return msg
     }
 
+    // TODO: update to handle empty select panics
     pub fn recv_drain(&mut self) -> Vec<(String, T)> {
         let mut sel = Select::new();
 
@@ -207,62 +221,63 @@ impl<T> SimulationReceiver<T> {
 
 // Work in progress
 // TODO: Coordinate with parser
+// TODO: Decouple from API
 
-pub struct Topology {
-    pub components: HashMap<String, RawComponent>,
-    pub wires: Vec<Wire>,
-}
-
-impl Topology {
-    pub fn new(components: HashMap<String, RawComponent>, wires: Vec<Wire>) -> Self {
-        Self { components, wires }
-    }
-}
-
-pub struct RawComponent {
-    pub kind: ComponentKind,
-    pub config: serde_json::Value,
-    pub system_ports: Vec<(String, PortType)>,
-    pub env_ports: Vec<(String, PortType)>,
-}
-
-impl RawComponent {
-    pub fn new(kind: ComponentKind, config: serde_json::Value, system_ports: Vec<(String, PortType)>, env_ports: Vec<(String, PortType)>) -> Self {
-        Self { kind, config, system_ports, env_ports }
-    }
-}
-
-pub enum ComponentKind {
-    Qemu,
-    Wasm,
-}
-
-pub enum PortType {
-    Int,
-    Float,
-    Bool,
-    Bytes,
-    Text,
-    Json,
-}
-
-pub struct Wire {
-    pub endpoints: Vec<WireEndpoint>,
-}
-
-impl Wire {
-    pub fn new(endpoints: Vec<WireEndpoint>) -> Self {
-        Self { endpoints }
-    }
-}
-
-pub struct WireEndpoint {
-    pub component: String,
-    pub port: String,
-}
-
-impl WireEndpoint {
-    pub fn new<C: Into<String>, P: Into<String>>(component: C, port: P) -> Self {
-        Self { component: component.into(), port:  port.into() }
-    }
-}
+// pub struct Topology {
+//     pub components: HashMap<String, RawComponent>,
+//     pub wires: Vec<Wire>,
+// }
+//
+// impl Topology {
+//     pub fn new(components: HashMap<String, RawComponent>, wires: Vec<Wire>) -> Self {
+//         Self { components, wires }
+//     }
+// }
+//
+// pub struct RawComponent {
+//     pub kind: ComponentKind,
+//     pub config: serde_json::Value,
+//     pub system_ports: Vec<(String, PortType)>,
+//     pub env_ports: Vec<(String, PortType)>,
+// }
+//
+// impl RawComponent {
+//     pub fn new(kind: ComponentKind, config: serde_json::Value, system_ports: Vec<(String, PortType)>, env_ports: Vec<(String, PortType)>) -> Self {
+//         Self { kind, config, system_ports, env_ports }
+//     }
+// }
+//
+// pub enum ComponentKind {
+//     Qemu,
+//     Wasm,
+// }
+//
+// pub enum PortType {
+//     Int,
+//     Float,
+//     Bool,
+//     Bytes,
+//     Text,
+//     Json,
+// }
+//
+// pub struct Wire {
+//     pub endpoints: Vec<WireEndpoint>,
+// }
+//
+// impl Wire {
+//     pub fn new(endpoints: Vec<WireEndpoint>) -> Self {
+//         Self { endpoints }
+//     }
+// }
+//
+// pub struct WireEndpoint {
+//     pub component: String,
+//     pub port: String,
+// }
+//
+// impl WireEndpoint {
+//     pub fn new<C: Into<String>, P: Into<String>>(component: C, port: P) -> Self {
+//         Self { component: component.into(), port:  port.into() }
+//     }
+// }

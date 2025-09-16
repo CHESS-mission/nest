@@ -2,10 +2,12 @@ pub mod wasm;
 pub mod qemu;
 pub mod test;
 
-use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Instant};
+use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::{Instant, SystemTime}};
 
 use anyhow::{anyhow, Result};
+use api::LogLevel;
 use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ports::{AnyEnvironmentPort, AnySystemPort, Message, SystemPort};
@@ -213,24 +215,13 @@ impl<'a, T: Send + 'static, S> MessageHandler<S> for TypedMessageHandler<'a, T, 
 
 // Logging
 
-/// The severity level of log entries.
-#[derive(Clone, Debug)]
-pub enum LogLevel {
-    /// Simple information.
-    Info,
-    /// Indicate a potential issue or unintended behavior.
-    Warning,
-    /// Indicate an issue.
-    Error,
-}
-
 /// A log entry with severity (see [LogLevel]), timestamp and message.
 #[derive(Clone, Debug)]
 pub struct LogEntry {
     /// The log severity level.
     pub level: LogLevel,
     /// The log timestamp.
-    pub timestamp: Instant,
+    pub timestamp: SystemTime,
     /// The log message.
     pub message: String,
 }
@@ -238,7 +229,7 @@ pub struct LogEntry {
 impl LogEntry {
     /// Create a new log entry.
     pub fn new<S: Into<String>>(level: LogLevel, message: S) -> Self {
-        Self { level, timestamp: Instant::now(), message: message.into() }
+        Self { level, timestamp: SystemTime::now(), message: message.into() }
     }
 }
 

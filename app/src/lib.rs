@@ -1,7 +1,7 @@
-use std::time::SystemTime;
+use time::OffsetDateTime;
 
-use api::{Log, NestApiCommand, NestApiEvent, SimulatorState, Topology};
-use leptos::{logging, prelude::*, server::codee::string::FromToStringCodec};
+use api::{LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO};
+use leptos::{html::Div, logging, prelude::*, server::codee::string::FromToStringCodec};
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
@@ -10,6 +10,47 @@ use leptos_router::{
 use leptos_use::{core::ConnectionReadyState, use_websocket_with_options, UseWebSocketOptions, UseWebSocketReturn};
 use leptos_icons::Icon;
 use icondata as i;
+
+#[derive(Clone, Debug)]
+pub enum SimulatorState {
+    Idle,
+    Ready {
+        topology: TopologyDTO
+    },
+    Running {
+        topology: TopologyDTO,
+        started_at: OffsetDateTime
+    },
+}
+
+impl SimulatorState {
+    pub fn is_idle(&self) -> bool {
+        matches!(self, SimulatorState::Idle)
+    }
+
+    pub fn is_ready(&self) -> bool {
+        matches!(self, SimulatorState::Ready {..})
+    }
+    
+    pub fn is_running(&self) -> bool {
+        matches!(self, SimulatorState::Running {..})
+    }
+}
+
+impl From<StatusUpdate> for SimulatorState {
+    fn from(value: StatusUpdate) -> Self {
+        match value {
+            StatusUpdate::Idle => SimulatorState::Idle,
+            StatusUpdate::Ready(update) => SimulatorState::Ready {
+                topology: update.topology
+            },
+            StatusUpdate::Running(update) => SimulatorState::Running {
+                topology: update.topology,
+                started_at: update.started_at
+            },
+        }
+    }
+}
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -65,19 +106,9 @@ fn HomePage() -> impl IntoView {
         UseWebSocketOptions::default().immediate(true),
     );
 
-    // fn format_time(time_ms: u128) -> String {
-    //     let total_secs = time_ms / 1000;
-    //     let hours = total_secs / 3600;
-    //     let minutes = (total_secs % 3600) / 60;
-    //     let seconds = total_secs % 60;
-    //     let millis = time_ms - total_secs * 1000;
-    //
-    //     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
-    // }
-
     let (simulator_state, set_simulator_state) = signal(SimulatorState::Idle);
 
-    let (logs, set_logs) = signal(Vec::new());
+    let logs = RwSignal::new(Vec::new());
     
     Effect::new(move |_| {
         message.with(move |message| {
@@ -86,8 +117,10 @@ fn HomePage() -> impl IntoView {
                 if let Ok(event) = serde_json::from_str(&message) {
                     logging::log!("A");
                     match event {
-                        NestApiEvent::SimulatorState(simulator_state) => set_simulator_state.set(simulator_state),
-                        NestApiEvent::Log(log) => set_logs.update(|logs| logs.push(log)),
+                        NestApiUpdate::Status(update)=>set_simulator_state.set(update.into()),
+                        NestApiUpdate::Event(event_update) => todo!(),
+                        NestApiUpdate::Log(log)=>logs.update(|logs|logs.push(log)),
+                        NestApiUpdate::Error(error_update) => todo!(),
                     }
                 } else {
                     logging::log!("B");
@@ -98,18 +131,18 @@ fn HomePage() -> impl IntoView {
 
     let simulator_start = {
         let send = send.clone();
-        move || send(&serde_json::to_string(&NestApiCommand::Start).unwrap())
+        move || send(&serde_json::to_string(&NestApiAction::Start).unwrap())
     };
 
     let simulator_stop = {
         let send = send.clone();
-        move || send(&serde_json::to_string(&NestApiCommand::Stop).unwrap())
+        move || send(&serde_json::to_string(&NestApiAction::Stop).unwrap())
     };
 
     provide_context(simulator_state);
 
     view! {
-        <div>
+        <div class="h-screen w-screen overflow-hidden bg-gray-200 flex flex-col">
             // Header
             <Header
                 ws_ready_state=ready_state
@@ -118,38 +151,12 @@ fn HomePage() -> impl IntoView {
                 start=simulator_start
                 stop=simulator_stop
             />
-            // Logs
-            <div class="px-8">
-                <div class="mb-4 text-neutral-950 text-3xl font-light">
-                    "Logs"
-                </div>
-                <For
-                    each=move || logs.get().into_iter().enumerate()
-                    key=|(index, _)| *index
-                    let:((_, log))
-                >
-                    {move || {
-                        let Log { source, level, timestamp, message } = log.clone();
-                        view! {
-                            <div class="mt-2 p-4 shadow-md border border-neutral-200 rounded-lg flex flex-col font-medium">
-                                <div class="flex flex-row font-mono text-xs">
-                                    <div class="px-3 py-1 rounded-full bg-green-200">
-                                        // {format_time(timestamp)}
-                                    </div>
-                                    <div class="ml-2 px-3 py-1 rounded-full bg-indigo-200">
-                                        {format!("{:?}", level)}
-                                    </div>
-                                    <div class="ml-2 px-3 py-1 rounded-full bg-orange-200">
-                                        {source}
-                                    </div>
-                                </div>
-                                <div class="mt-2 px-1 font-mono text-sm">
-                                    {message}
-                                </div>
-                            </div>
-                        }
-                    }}
-                </For>
+            <div class="grow p-4 flex overflow-hidden">
+                // Side Panel
+                <SidePanel
+                    logs=logs
+                    style:width="100%"
+                />
             </div>
         </div>
     }
@@ -189,8 +196,8 @@ fn Header(
     };
 
     view! {
-        <div class="px-2 py-1 flex">
-            <div class="ml-1 flex items-center text-neutral-950 text-5xl font-extralight">
+        <div class="px-2 pt-1 pb-2 flex bg-white border border-gray-300/50 shadow-md">
+            <div class="ml-1 flex items-center text-gray-950 text-5xl font-extralight">
                 "NEST"
             </div>
             <div class="flex flex-col grow">
@@ -214,7 +221,135 @@ fn Header(
 }
 
 #[component]
-fn ConnectionWidget(ws_ready_state: Signal<ConnectionReadyState>, ws_connect: impl Fn() + 'static, ws_disconnect: impl Fn() + 'static) -> impl IntoView {
+fn SidePanel(
+    #[prop(into)]
+    logs: RwSignal<Vec<LogUpdate>>,
+) -> impl IntoView {
+    #[derive(Clone, PartialEq)]
+    enum Tab {
+        Logs,
+        Events,
+    }
+
+    let seg_button_items = vec![
+        SegButtonItem {
+            label: "logs".to_owned(),
+            value: Tab::Logs,
+        },
+        SegButtonItem {
+            label: "events".to_owned(),
+            value: Tab::Events,
+        },
+    ];
+
+    let selected_tab = RwSignal::new(Tab::Logs);
+
+    let simulator_state = use_context::<ReadSignal<SimulatorState>>().expect("to have found the simulator state provided");
+
+    let (started_at, set_started_at) = signal(OffsetDateTime::UNIX_EPOCH);
+
+    Effect::new(move || {
+        simulator_state.with(move |sim_state| {
+            if let SimulatorState::Running { started_at, .. } = sim_state {
+                logs.update(|logs| logs.clear());
+                set_started_at.set(started_at.clone());
+            }
+        })
+    });
+
+    let console_ref: NodeRef<Div> = NodeRef::new();
+    let (auto_scroll, set_auto_scroll) = signal(true);
+
+    let on_scroll = {
+        let console_ref = console_ref.clone();
+        move |_| {
+            if let Some(div) = console_ref.get() {
+                let at_bottom = div.scroll_top() + div.client_height() >= div.scroll_height() - 5;
+                set_auto_scroll.set(at_bottom);
+            }
+        }
+    };
+
+    // Auto-scroll only if user is at the bottom
+    Effect::new(move || {
+        logs.with(|_| {
+            if auto_scroll.get() {
+                if let Some(div) = console_ref.get() {
+                    div.set_scroll_top(div.scroll_height());
+                }
+            }
+        });
+    });
+
+    let format_time = move |timestamp: OffsetDateTime| {
+        let elapsed = timestamp - (*started_at.read());
+        let total_secs = elapsed.whole_seconds();
+        let hours = total_secs / 3600;
+        let minutes = (total_secs % 3600) / 60;
+        let seconds = total_secs % 60;
+        let millis = elapsed.subsec_milliseconds();
+
+        format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+    };
+
+    view! {
+        <div class="p-3 flex flex-col bg-white rounded-xl border border-gray-300/50 shadow-md">
+            <div class="flex justify-center">
+                <SegButton
+                    items=seg_button_items
+                    selected=selected_tab
+                />
+            </div>
+            <div
+                node_ref=console_ref
+                class="mt-3 p-3 overflow-y-auto h-full bg-gray-900 rounded-lg"
+                on:scroll=on_scroll
+            >
+                <For
+                    each=move || logs.get().into_iter().enumerate()
+                    key=|(index, _)| *index
+                    let:((_index, log))
+                >
+                    {move || {
+                        let log = log.clone();
+                        view! {
+                            <div class="text-sm text-gray-400 font-mono">
+                                {format_time(log.timestamp)}
+                                ": ["
+                                <span class="text-gray-500 italic">
+                                    {log.component}
+                                </span>
+                                "] ["
+                                <span
+                                    class:text-blue-500=move || log.level == api::LogLevelDTO::Info
+                                    class:text-yellow-500=move || log.level == api::LogLevelDTO::Warning
+                                    class:text-red-500=move || log.level == api::LogLevelDTO::Error
+                                >
+                                    {format!("{:?}", log.level)}
+                                </span>
+                                "] "
+                                <span
+                                    class:text-gray-50=move || log.level == api::LogLevelDTO::Info
+                                    class:text-yellow-500=move || log.level == api::LogLevelDTO::Warning
+                                    class:text-red-500=move || log.level == api::LogLevelDTO::Error
+                                >
+                                    {log.message}
+                                </span>
+                            </div>
+                        }
+                    }}
+                </For>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn ConnectionWidget(
+    ws_ready_state: Signal<ConnectionReadyState>,
+    ws_connect: impl Fn() + 'static,
+    ws_disconnect: impl Fn() + 'static
+) -> impl IntoView {
     let status = move || match ws_ready_state.get() {
         ConnectionReadyState::Connecting => "connecting...",
         ConnectionReadyState::Open => "connected",
@@ -251,7 +386,7 @@ fn ConnectionWidget(ws_ready_state: Signal<ConnectionReadyState>, ws_connect: im
                     false => view! { <Icon icon={i::TbLinkOffOutline}/> },
                 }}
             </span>
-            <span class="ml-1 text-neutral-700 text-xs">
+            <span class="ml-1 text-gray-700 text-xs">
                 {move || if hovering.get() {
                     if connected() { "disconnect" } else { "connect" }
                 } else {
@@ -274,7 +409,7 @@ fn Button(
     let icon_view = move || icon.map(|icon| view!{
         <div
             class=move || {
-                let base = "mr-1 group-disabled:text-neutral-300".to_owned();
+                let base = "mr-1 group-disabled:text-gray-300".to_owned();
                 match icon_color {
                     Some(color) => format!("{} {}", base, color.get()),
                     None => base,
@@ -287,12 +422,45 @@ fn Button(
 
     view! {
         <button
-            class="group flex items-center text-neutral-950 bg-white border border-neutral-300 cursor-pointer
-                hover:bg-neutral-100 rounded-md font-medium text-sm px-6 h-8 disabled:bg-neutral-50
-                disabled:text-neutral-300 disabled:cursor-default"
+            class="group flex items-center text-gray-950 bg-white border border-gray-300 cursor-pointer
+                hover:bg-gray-100 rounded-md font-medium text-sm px-6 h-8 disabled:bg-gray-50
+                disabled:text-gray-300 disabled:cursor-default"
         >
             {icon_view}
             {label}
         </button>
+    }
+}
+
+struct SegButtonItem<T: Clone + PartialEq + Send + Sync + 'static> {
+    label: String,
+    value: T,
+}
+
+#[component]
+fn SegButton<T: Clone + PartialEq + Send + Sync + 'static>(
+    items: Vec<SegButtonItem<T>>,
+    selected: RwSignal<T>,
+) -> impl IntoView {
+    view! {
+        <div class="py-1.5 px-1 group flex w-fit rounded-lg bg-gray-200 inset-shadow-sm">
+            {items.into_iter().map(|SegButtonItem { label, value }| view! {
+                <button
+                    class="mx-0.5 flex items-center text-gray-950 cursor-pointer
+                        rounded-md font-medium text-sm px-6 h-8 group-disabled:bg-gray-50
+                        group-disabled:text-gray-300 group-disabled:cursor-default"
+                    class=(["bg-white", "shadow-sm"], {
+                        let value = value.clone();
+                        move || selected.with(|s| *s == value)
+                    })
+                    on:click={
+                        let value = value.clone();
+                        move |_| selected.set(value.clone())
+                    }
+                >
+                    {label}
+                </button>
+            }).collect_view()}
+        </div>
     }
 }

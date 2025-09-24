@@ -10,6 +10,7 @@ leptos = { workspace = true, features = [ "ssr" ]}
 leptos_axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+time.workspace = true
 
 axum = { version = "0.8.4", features = ["macros"] }
 extism = "1.10.0"

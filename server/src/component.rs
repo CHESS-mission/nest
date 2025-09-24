@@ -2,13 +2,13 @@ pub mod wasm;
 pub mod qemu;
 pub mod test;
 
-use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::{Instant, SystemTime}};
+use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}};
 
 use anyhow::{anyhow, Result};
-use api::LogLevel;
+use api::LogLevelDTO;
 use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::ports::{AnyEnvironmentPort, AnySystemPort, Message, SystemPort};
 
@@ -219,17 +219,17 @@ impl<'a, T: Send + 'static, S> MessageHandler<S> for TypedMessageHandler<'a, T, 
 #[derive(Clone, Debug)]
 pub struct LogEntry {
     /// The log severity level.
-    pub level: LogLevel,
+    pub level: LogLevelDTO,
     /// The log timestamp.
-    pub timestamp: SystemTime,
+    pub timestamp: OffsetDateTime,
     /// The log message.
     pub message: String,
 }
 
 impl LogEntry {
     /// Create a new log entry.
-    pub fn new<S: Into<String>>(level: LogLevel, message: S) -> Self {
-        Self { level, timestamp: SystemTime::now(), message: message.into() }
+    pub fn new<S: Into<String>>(level: LogLevelDTO, message: S) -> Self {
+        Self { level, timestamp: OffsetDateTime::now_utc(), message: message.into() }
     }
 }
 
@@ -247,19 +247,19 @@ impl Logger {
 
     /// Log information message.
     pub fn info<S: Into<String>>(&self, message: S) -> Result<()> {
-        self.tx.send(LogEntry::new(LogLevel::Info, message))?;
+        self.tx.send(LogEntry::new(LogLevelDTO::Info, message))?;
         Ok(())
     }
 
     /// Log warning message.
     pub fn warning<S: Into<String>>(&self, message: S) -> Result<()> {
-        self.tx.send(LogEntry::new(LogLevel::Warning, message))?;
+        self.tx.send(LogEntry::new(LogLevelDTO::Warning, message))?;
         Ok(())
     }
 
     /// Log error message.
     pub fn error<S: Into<String>>(&self, message: S) -> Result<()> {
-        self.tx.send(LogEntry::new(LogLevel::Error, message))?;
+        self.tx.send(LogEntry::new(LogLevelDTO::Error, message))?;
         Ok(())
     }
 }

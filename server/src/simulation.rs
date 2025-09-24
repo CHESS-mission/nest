@@ -1,14 +1,12 @@
 use std::{collections::HashMap};
 
 use anyhow::{Result, bail};
-use api::{ComponentKind, PortType, Topology};
 use crossbeam_channel::{Receiver, Select, TryRecvError};
 
 use crate::{
     component::{
         qemu::QemuComponent, wasm::WasmComponent, Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry
-    },
-    ports::{AnySystemPortBuilder, SystemPortBuilder},
+    }, parser::{ComponentTypeSpec, PortTypeSpec, TopologySpec}, ports::{AnySystemPortBuilder, SystemPortBuilder}
 };
 
 pub struct SimulationBuilder {
@@ -16,19 +14,19 @@ pub struct SimulationBuilder {
 }
 
 impl SimulationBuilder {
-    pub fn from_topology(topology: &Topology) -> Result<Self> {
+    pub fn from_topology(topology: &TopologySpec) -> Result<Self> {
         // Create system ports
         let mut system_ports: HashMap<String, HashMap<String, AnySystemPortBuilder>> = HashMap::new();
-        for (name, raw_comp) in &topology.components {
-            system_ports.insert(name.to_owned(), raw_comp.system_ports
+        for comp in &topology.components {
+            system_ports.insert(comp.name.clone(), comp.system_ports
                 .iter()
-                .map(|(port_name, port_type)| (port_name.to_owned(), match port_type {
-                    PortType::Int => AnySystemPortBuilder::Int(SystemPortBuilder::default()),
-                    PortType::Float => AnySystemPortBuilder::Float(SystemPortBuilder::default()),
-                    PortType::Bool => AnySystemPortBuilder::Bool(SystemPortBuilder::default()),
-                    PortType::Bytes => AnySystemPortBuilder::Bytes(SystemPortBuilder::default()),
-                    PortType::Text => AnySystemPortBuilder::Text(SystemPortBuilder::default()),
-                    PortType::Json => AnySystemPortBuilder::Json(SystemPortBuilder::default()),
+                .map(|port| (port.name.to_owned(), match port.port_type {
+                    PortTypeSpec::Int => AnySystemPortBuilder::Int(SystemPortBuilder::default()),
+                    PortTypeSpec::Float => AnySystemPortBuilder::Float(SystemPortBuilder::default()),
+                    PortTypeSpec::Bool => AnySystemPortBuilder::Bool(SystemPortBuilder::default()),
+                    PortTypeSpec::Bytes => AnySystemPortBuilder::Bytes(SystemPortBuilder::default()),
+                    PortTypeSpec::Text => AnySystemPortBuilder::Text(SystemPortBuilder::default()),
+                    PortTypeSpec::Json => AnySystemPortBuilder::Json(SystemPortBuilder::default()),
                 }))
                 .collect()
             );
@@ -67,12 +65,12 @@ impl SimulationBuilder {
 
         // Create components
         let mut components: HashMap<String, Box<dyn Component>> = HashMap::new();
-        for (name, raw_comp) in &topology.components {
+        for comp in &topology.components {
             let mut params = ComponentParams::new();
 
-            params.set_config(raw_comp.config.clone());
+            params.set_config(comp.config.clone());
 
-            if let Some(comp_ports) = system_ports.remove(name) {
+            if let Some(comp_ports) = system_ports.remove(&comp.name) {
                 for (port_name, port_builder) in comp_ports {
                     params.add_system_port(port_name, port_builder.build());
                 }
@@ -80,9 +78,9 @@ impl SimulationBuilder {
 
             // TODO: create environment ports
 
-            match raw_comp.kind {
-                ComponentKind::Qemu => { components.insert(name.into(), Box::new(QemuComponent::from_params(&params)?)); },
-                ComponentKind::Wasm => { components.insert(name.into(), Box::new(WasmComponent::from_params(&params)?)); },
+            match comp.component_type {
+                ComponentTypeSpec::Qemu => { components.insert(comp.name.clone(), Box::new(QemuComponent::from_params(&params)?)); },
+                ComponentTypeSpec::Wasm => { components.insert(comp.name.clone(), Box::new(WasmComponent::from_params(&params)?)); },
             }
         }
 
@@ -218,66 +216,3 @@ impl<T> SimulationReceiver<T> {
         msgs
     }
 }
-
-// Work in progress
-// TODO: Coordinate with parser
-// TODO: Decouple from API
-
-// pub struct Topology {
-//     pub components: HashMap<String, RawComponent>,
-//     pub wires: Vec<Wire>,
-// }
-//
-// impl Topology {
-//     pub fn new(components: HashMap<String, RawComponent>, wires: Vec<Wire>) -> Self {
-//         Self { components, wires }
-//     }
-// }
-//
-// pub struct RawComponent {
-//     pub kind: ComponentKind,
-//     pub config: serde_json::Value,
-//     pub system_ports: Vec<(String, PortType)>,
-//     pub env_ports: Vec<(String, PortType)>,
-// }
-//
-// impl RawComponent {
-//     pub fn new(kind: ComponentKind, config: serde_json::Value, system_ports: Vec<(String, PortType)>, env_ports: Vec<(String, PortType)>) -> Self {
-//         Self { kind, config, system_ports, env_ports }
-//     }
-// }
-//
-// pub enum ComponentKind {
-//     Qemu,
-//     Wasm,
-// }
-//
-// pub enum PortType {
-//     Int,
-//     Float,
-//     Bool,
-//     Bytes,
-//     Text,
-//     Json,
-// }
-//
-// pub struct Wire {
-//     pub endpoints: Vec<WireEndpoint>,
-// }
-//
-// impl Wire {
-//     pub fn new(endpoints: Vec<WireEndpoint>) -> Self {
-//         Self { endpoints }
-//     }
-// }
-//
-// pub struct WireEndpoint {
-//     pub component: String,
-//     pub port: String,
-// }
-//
-// impl WireEndpoint {
-//     pub fn new<C: Into<String>, P: Into<String>>(component: C, port: P) -> Self {
-//         Self { component: component.into(), port:  port.into() }
-//     }
-// }

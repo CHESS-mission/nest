@@ -84,12 +84,10 @@
 //     }
 // }
 
-use std::collections::HashMap;
 
-use api::{Component, ComponentKind, PortType, Topology, Wire, WireEndpoint};
 use leptos::config::get_configuration;
 use serde_json::json;
-use server::{server::NestServer, simulator::Simulator};
+use server::{parser::{ComponentSpec, ComponentTypeSpec, EnvironmentVarSpec, PortTypeSpec, SystemPortSpec, TopologySpec, WireEndpointSpec, WireSpec}, server::NestServer, simulator::Simulator};
 
 #[tokio::main]
 async fn main() {
@@ -104,12 +102,16 @@ async fn main() {
     server.serve().await;
 }
 
-fn create_topology() -> Topology {
-    // Define components
-    let mut raw_components: HashMap<String, Component> = HashMap::new();
+fn create_topology() -> TopologySpec {
+    // Define environment
+    let environment: Vec<EnvironmentVarSpec> = Vec::new();
 
-    raw_components.insert("QEMU".into(), Component::new(
-        ComponentKind::Qemu,
+    // Define components
+    let mut components: Vec<ComponentSpec> = Vec::new();
+
+    components.push(ComponentSpec::new(
+        "QEMU",
+        ComponentTypeSpec::Qemu,
         json!({
             "arch": "arm",
             "mem_mb": 1024,
@@ -130,28 +132,29 @@ fn create_topology() -> Topology {
                 "7": "echo_in",
             },
         }),
-        vec![("i2c".into(), PortType::Json)],
+        vec![SystemPortSpec::new("i2c", PortTypeSpec::Json)],
         vec![],
     ));
 
-    raw_components.insert("TEMP".into(), Component::new(
-        ComponentKind::Wasm,
+    components.push(ComponentSpec::new(
+        "TEMP",
+        ComponentTypeSpec::Wasm,
         json!({
             "module": "component_artifacts/sensor_temp.wasm"
         }),
-        vec![("i2c".into(), PortType::Json)],
+        vec![SystemPortSpec::new("i2c", PortTypeSpec::Json)],
         vec![],
     ));
 
     // Define wires
-    let mut wires: Vec<Wire> = Vec::new();
+    let mut wires: Vec<WireSpec> = Vec::new();
 
-    wires.push(Wire::new(
+    wires.push(WireSpec::new(
         vec![
-            WireEndpoint::new("QEMU", "i2c"),
-            WireEndpoint::new("TEMP", "i2c"),
+            WireEndpointSpec::new("QEMU", "i2c"),
+            WireEndpointSpec::new("TEMP", "i2c"),
         ]
     ));
 
-    Topology::new(raw_components, wires)
+    TopologySpec::new(environment, components, wires)
 }

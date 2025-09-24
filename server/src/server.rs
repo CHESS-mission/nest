@@ -1,6 +1,6 @@
-use std::{net::SocketAddr, sync::{Arc}, time::{Instant, SystemTime}};
+use std::{net::SocketAddr, sync::{Arc}};
 
-use api::{NestApiCommand, NestApiEvent};
+use api::{LogUpdate, NestApiAction, NestApiUpdate, ReadyStatusUpdate, RunningStatusUpdate, StatusUpdate};
 use axum::{extract::{ws::{Message, WebSocket}, FromRef, State, WebSocketUpgrade}, response::Response, routing::any, Router};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use leptos::prelude::*;
@@ -18,17 +18,21 @@ struct NestServerState {
 }
 
 impl NestServerState {
-    pub async fn api_state(&self) -> api::SimulatorState {
+    pub async fn into_status_update(&self) -> StatusUpdate {
         let sim = self.simulator.lock().await;
         match sim.state() {
-            SimulatorState::Idle => api::SimulatorState::Idle,
-            SimulatorState::Ready => api::SimulatorState::Ready {
-                topology: sim.topology().unwrap().clone()
-            },
-            SimulatorState::Running => api::SimulatorState::Running {
-                topology: sim.topology().unwrap().clone(),
-                started_time: sim.started_time().unwrap()
-            },
+            SimulatorState::Idle => StatusUpdate::Idle,
+            SimulatorState::Ready => StatusUpdate::Ready(
+                ReadyStatusUpdate {
+                    topology: sim.topology().unwrap().clone().into()
+                }
+            ),
+            SimulatorState::Running => StatusUpdate::Running(
+                RunningStatusUpdate {
+                    topology: sim.topology().unwrap().clone().into(),
+                    started_at: sim.started_time().unwrap()
+                }
+            ),
         }
     }
 }
@@ -107,7 +111,7 @@ async fn handle_websocket(socket: WebSocket, state: NestServerState) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Send initial state
-    let api_state = serde_json::to_string(&NestApiEvent::SimulatorState(state.api_state().await)).unwrap();
+    let api_state = serde_json::to_string(&NestApiUpdate::Status(state.into_status_update().await)).unwrap();
     let _ = ws_sender.send(Message::Text(api_state.into())).await;
 
     let ws_sender = Arc::new(Mutex::new(ws_sender));
@@ -119,10 +123,10 @@ async fn handle_websocket(socket: WebSocket, state: NestServerState) {
         async move {
             while let Ok((source, log_entry)) = log_receiver.recv().await {
                 let log = serde_json::to_string(
-                    &NestApiEvent::Log(api::Log {
-                        source: source,
-                        level: log_entry.level,
+                    &NestApiUpdate::Log(LogUpdate {
                         timestamp: log_entry.timestamp,
+                        level: log_entry.level,
+                        component: source,
                         message: log_entry.message,
                     })
                 ).unwrap();
@@ -134,31 +138,34 @@ async fn handle_websocket(socket: WebSocket, state: NestServerState) {
     while let Some(msg) = ws_receiver.next().await {
         if let Ok(msg) = msg {
             if let Message::Text(msg) = msg {
-                let command: NestApiCommand = serde_json::from_str(&msg).unwrap();
-                match command {
-                    NestApiCommand::Start => {
+                let action: NestApiAction= serde_json::from_str(&msg).unwrap();
+                match action {
+                    NestApiAction::Start => {
                         {
-                        let mut sim = state.simulator.lock().await;
-                        // Start simulation
-                        sim.start().unwrap();
-                        // Start log broadcaster
-                        Broadcaster::start(sim.log_receiver().unwrap(), state.log_sender.clone());
+                            let mut sim = state.simulator.lock().await;
+                            // Start simulation
+                            sim.start().unwrap();
+                            // Start log broadcaster
+                            Broadcaster::start(sim.log_receiver().unwrap(), state.log_sender.clone());
                         }
                         // Send new state
-                        let api_state = serde_json::to_string(&NestApiEvent::SimulatorState(state.api_state().await)).unwrap();
+                        let api_state = serde_json::to_string(&NestApiUpdate::Status(state.into_status_update().await)).unwrap();
                         let _ = ws_sender.lock().await.send(Message::Text(api_state.into())).await;
                     },
-                    NestApiCommand::Stop => {
+                    NestApiAction::Stop => {
                         {
-                        let mut sim = state.simulator.lock().await;
-                        // Stop simulation
-                        sim.stop().unwrap();
+                            let mut sim = state.simulator.lock().await;
+                            // Stop simulation
+                            sim.stop().unwrap();
                         }
                         // Send new state
-                        let api_state = serde_json::to_string(&NestApiEvent::SimulatorState(state.api_state().await)).unwrap();
+                        let api_state = serde_json::to_string(&NestApiUpdate::Status(state.into_status_update().await)).unwrap();
                         let _ = ws_sender.lock().await.send(Message::Text(api_state.into())).await;
                         // TODO: Does broadcaster stop on its own?
                     },
+                    NestApiAction::UploadTopology(upload_topology_action) => todo!(),
+                    NestApiAction::Command(command_action) => todo!(),
+                    NestApiAction::SetEnv(set_env_action) => todo!(),
                 }
             }
         } else {

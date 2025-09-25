@@ -71,6 +71,18 @@ impl AnySystemPortBuilder {
         }
         Ok(())
     }
+
+    /// Build a new [AnySystemPort] from the [AnySystemPortBuilder].
+    pub fn build(self) -> AnySystemPort {
+        match self {
+            AnySystemPortBuilder::Int(port) => AnySystemPort::Int(port.build()),
+            AnySystemPortBuilder::Float(port) => AnySystemPort::Float(port.build()),
+            AnySystemPortBuilder::Bool(port) => AnySystemPort::Bool(port.build()),
+            AnySystemPortBuilder::Bytes(port) => AnySystemPort::Bytes(port.build()),
+            AnySystemPortBuilder::Text(port) => AnySystemPort::Text(port.build()),
+            AnySystemPortBuilder::Json(port) => AnySystemPort::Json(port.build()),
+        }
+    }
 }
 
 /// Simple wrapper around crossbeam_channel receiver (one) and senders (many) with a Message type.
@@ -253,7 +265,7 @@ pub struct TextMessage {
 }
 
 impl TextMessage {
-    pub fn new(data: &str) -> Self {
+    pub fn new<S: Into<String>>(data: S) -> Self {
         Self { data: data.into() }
     }
 }

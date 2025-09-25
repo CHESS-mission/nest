@@ -1,0 +1,28 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+api = { path = "../api" }
+app = { path = "../app", default-features = false, features = ["ssr"] }
+leptos = { workspace = true, features = [ "ssr" ]}
+leptos_axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+
+axum = { version = "0.8.4", features = ["macros"] }
+extism = "1.10.0"
+crossbeam-channel = "0.5.14"
+anyhow = "1.0"
+thiserror = "2.0.12"
+tokio = { version = "1.47.1", features = ["full"] }
+vhost = { version = "0.13", features = ["vhost-user-backend"] }
+vhost-user-backend = "0.17"
+virtio-bindings = "0.2.5"
+virtio-queue = "0.14"
+vm-memory = "0.16.1"
+vmm-sys-util = "0.12"
+uuid = "1.17.0"
+futures-util = "0.3.31"

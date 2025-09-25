@@ -23,6 +23,11 @@
             socat
             extism-cli
             qemu
+            cargo-leptos
+            binaryen
+            dart-sass
+            tailwindcss_4
+            nodePackages.nodejs
             llvmPackages.clang
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
           ];

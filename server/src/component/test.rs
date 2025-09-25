@@ -70,7 +70,7 @@ impl TestComponent {
 }
 
 impl Component for TestComponent {
-    fn start(self) -> Result<ComponentHandle> {
+    fn start(self: Box<Self>) -> Result<ComponentHandle> {
         // ComponentHandle::start creates a new handle for the provided closure and
         // takes care of spawning it as a new thread. It also passes fully initialized
         // command_receiver, logger and status instances to the closure.
@@ -117,7 +117,7 @@ impl Component for TestComponent {
                         };
 
                         match result {
-                            Ok(()) => logger.info(&format!("Received simulator command: {} {}", command, args_string))?,
+                            Ok(()) => logger.info(format!("Received simulator command: {} {}", command, args_string))?,
                             Err(err) => logger.error(&err)?,
                         };
                     }
@@ -137,10 +137,10 @@ impl Component for TestComponent {
                     // This will be visible from outside the component (e.g. displayed in a GUI).
                     set_status!(status.cumulative_sum, json!(cumsum))?;
                 }
-                logger.info(&format!("New cumulative sum: {}", cumsum))?;
+                logger.info(format!("New cumulative sum: {}", cumsum))?;
 
                 // Send a message through the component's print port
-                let output = TextMessage::new(&format!("Cumulative sum: {}", cumsum));
+                let output = TextMessage::new(format!("Cumulative sum: {}", cumsum));
                 self.print_port.send(output);
 
                 Ok(HandlerStatus::Ok)

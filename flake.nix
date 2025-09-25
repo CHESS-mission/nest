@@ -24,7 +24,8 @@
             extism-cli
             qemu
             cargo-leptos
-            sass
+            binaryen
+            dart-sass
             tailwindcss_4
             nodePackages.nodejs
             llvmPackages.clang

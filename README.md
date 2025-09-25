@@ -6,8 +6,15 @@ using [Extism](https://extism.org/).
 
 ## Build
 
-The `nest` binary can be built using Cargo:
+Install the following dependencies:
+
+- `cargo-leptos`: `cargo install --locked cargo-leptos`.
+- `saas`: <https://sass-lang.com/install/>.
+- `tailwindcss`: <https://tailwindcss.com/docs/installation>.
+- `binaryen`: <https://github.com/WebAssembly/binaryen>.
+
+Then the `server` release binary can be built using Cargo Leptos:
 
 ```bash
-cargo build --release
+cargo leptos build --release
 ```

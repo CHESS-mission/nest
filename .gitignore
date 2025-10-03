@@ -1,3 +1,4 @@
 /target
 .venv/
 requirements.txt
+repo_structure.txt

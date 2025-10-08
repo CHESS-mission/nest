@@ -108,7 +108,7 @@ pub struct GpioLine {
     value: u8,
     irq_type: u8,
     irq_latched: bool,
-    irq_reservation: Option<IrqReservation>
+    irq_reservation: Option<IrqReservation>,
 }
 
 impl GpioLine {
@@ -152,7 +152,8 @@ impl VhostUserGpioBackend {
         gpio_lines: Vec<GpioLine>,
     ) -> Result<Self> {
         let ngpio = gpio_lines.len();
-        let gpio_names = gpio_lines.iter()
+        let gpio_names = gpio_lines
+            .iter()
             .map(|line| line.name.clone().unwrap_or_default() + "\0")
             .collect::<String>();
 
@@ -163,7 +164,7 @@ impl VhostUserGpioBackend {
         };
 
         let gpio_lines = Arc::new(Mutex::new(gpio_lines));
-        
+
         let events_handle = spawn({
             let gpio_lines = gpio_lines.clone();
             move || -> Result<()> {
@@ -178,14 +179,21 @@ impl VhostUserGpioBackend {
                     // Access gpio_lines
                     {
                         let mut gpio_lines = gpio_lines.lock().unwrap();
-                        let gpio_line = gpio_lines.get_mut(line as usize)
+                        let gpio_line = gpio_lines
+                            .get_mut(line as usize)
                             .ok_or_else(|| GpioError::GpioLineInvalid(line))?;
-                        
+
                         // Check for matching interrupt
                         let irq_triggered = match gpio_line.irq_type {
                             VIRTIO_GPIO_IRQ_TYPE_NONE => false,
-                            VIRTIO_GPIO_IRQ_TYPE_EDGE_RISING => gpio_line.value == VIRTIO_GPIO_VALUE_LOW && value == VIRTIO_GPIO_VALUE_HIGH,
-                            VIRTIO_GPIO_IRQ_TYPE_EDGE_FALLING => gpio_line.value == VIRTIO_GPIO_VALUE_HIGH && value == VIRTIO_GPIO_VALUE_LOW,
+                            VIRTIO_GPIO_IRQ_TYPE_EDGE_RISING => {
+                                gpio_line.value == VIRTIO_GPIO_VALUE_LOW
+                                    && value == VIRTIO_GPIO_VALUE_HIGH
+                            }
+                            VIRTIO_GPIO_IRQ_TYPE_EDGE_FALLING => {
+                                gpio_line.value == VIRTIO_GPIO_VALUE_HIGH
+                                    && value == VIRTIO_GPIO_VALUE_LOW
+                            }
                             VIRTIO_GPIO_IRQ_TYPE_EDGE_BOTH => gpio_line.value != value,
                             VIRTIO_GPIO_IRQ_TYPE_LEVEL_HIGH => value == VIRTIO_GPIO_VALUE_HIGH,
                             VIRTIO_GPIO_IRQ_TYPE_LEVEL_LOW => value == VIRTIO_GPIO_VALUE_LOW,
@@ -194,12 +202,18 @@ impl VhostUserGpioBackend {
 
                         if irq_triggered {
                             if let Some(res) = &gpio_line.irq_reservation {
-                                Self::send_event_response(&res.vring, &res.desc_chain, res.addr, VIRTIO_GPIO_IRQ_STATUS_VALID)?;
+                                Self::send_event_response(
+                                    &res.vring,
+                                    &res.desc_chain,
+                                    res.addr,
+                                    VIRTIO_GPIO_IRQ_STATUS_VALID,
+                                )?;
                                 gpio_line.irq_reservation = None;
                                 gpio_line.irq_latched = false;
-                            } else if gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_EDGE_RISING ||
-                                      gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_EDGE_FALLING ||
-                                      gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_EDGE_BOTH {
+                            } else if gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_EDGE_RISING
+                                || gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_EDGE_FALLING
+                                || gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_EDGE_BOTH
+                            {
                                 // Latch edge interrupts
                                 gpio_line.irq_latched = true;
                             }
@@ -265,7 +279,8 @@ impl VhostUserGpioBackend {
             let response_data = {
                 // Access gpio_lines
                 let mut gpio_lines = self.gpio_lines.lock().unwrap();
-                let gpio_line = gpio_lines.get_mut(request.gpio.to_native() as usize)
+                let gpio_line = gpio_lines
+                    .get_mut(request.gpio.to_native() as usize)
                     .ok_or_else(|| GpioError::GpioLineInvalid(request.gpio.to_native()))?;
 
                 match request.rtype.to_native() {
@@ -279,8 +294,12 @@ impl VhostUserGpioBackend {
                     VIRTIO_GPIO_MSG_SET_VALUE => {
                         let event = match request.value.to_native() as u8 {
                             VIRTIO_GPIO_VALUE_LOW => GpioEvent::ValueLow(request.gpio.to_native()),
-                            VIRTIO_GPIO_VALUE_HIGH => GpioEvent::ValueHigh(request.gpio.to_native()),
-                            _ => return Err(GpioError::GpioValueInvalid(request.value.to_native())),
+                            VIRTIO_GPIO_VALUE_HIGH => {
+                                GpioEvent::ValueHigh(request.gpio.to_native())
+                            }
+                            _ => {
+                                return Err(GpioError::GpioValueInvalid(request.value.to_native()));
+                            }
                         };
                         gpio_line.value = request.value.to_native() as u8;
                         self.events_tx.send(event)?;
@@ -291,7 +310,12 @@ impl VhostUserGpioBackend {
                         if irq_type == VIRTIO_GPIO_IRQ_TYPE_NONE {
                             if let Some(res) = &gpio_line.irq_reservation {
                                 // Cancel reservation
-                                Self::send_event_response(&res.vring, &res.desc_chain, res.addr, VIRTIO_GPIO_IRQ_STATUS_INVALID)?;
+                                Self::send_event_response(
+                                    &res.vring,
+                                    &res.desc_chain,
+                                    res.addr,
+                                    VIRTIO_GPIO_IRQ_STATUS_INVALID,
+                                )?;
                                 gpio_line.irq_reservation = None;
                             }
                         }
@@ -363,7 +387,8 @@ impl VhostUserGpioBackend {
         addr: GuestAddress,
     ) -> Result<()> {
         let mut gpio_lines = self.gpio_lines.lock().unwrap();
-        let gpio_line = gpio_lines.get_mut(gpio as usize)
+        let gpio_line = gpio_lines
+            .get_mut(gpio as usize)
             .ok_or_else(|| GpioError::GpioLineInvalid(gpio))?;
 
         // Interrupt should be enabled before sending buffer and no other buffer
@@ -371,16 +396,22 @@ impl VhostUserGpioBackend {
         if gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_NONE || gpio_line.irq_reservation.is_some() {
             // Invalid
             Self::send_event_response(vring, &desc_chain, addr, VIRTIO_GPIO_IRQ_STATUS_INVALID)?;
-        } else if gpio_line.irq_latched ||
-                  gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_LEVEL_HIGH && gpio_line.value == VIRTIO_GPIO_VALUE_HIGH ||
-                  gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_LEVEL_LOW && gpio_line.value == VIRTIO_GPIO_VALUE_LOW
+        } else if gpio_line.irq_latched
+            || gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_LEVEL_HIGH
+                && gpio_line.value == VIRTIO_GPIO_VALUE_HIGH
+            || gpio_line.irq_type == VIRTIO_GPIO_IRQ_TYPE_LEVEL_LOW
+                && gpio_line.value == VIRTIO_GPIO_VALUE_LOW
         {
             // Answer directly
             Self::send_event_response(vring, &desc_chain, addr, VIRTIO_GPIO_IRQ_STATUS_VALID)?;
             gpio_line.irq_latched = false;
         } else {
             // Make a reservation
-            gpio_line.irq_reservation = Some(IrqReservation { vring: vring.clone(), desc_chain, addr })
+            gpio_line.irq_reservation = Some(IrqReservation {
+                vring: vring.clone(),
+                desc_chain,
+                addr,
+            })
         }
 
         Ok(())
@@ -626,23 +657,31 @@ pub struct GpioBackendHandle {
 }
 
 /// Start the vhost-user GPIO backend daemon.
-pub fn start_gpio_backend<P: AsRef<Path>>(gpio_socket: P, gpio_lines: Vec<GpioLine>) -> GpioBackendHandle {
+pub fn start_gpio_backend<P: AsRef<Path>>(
+    gpio_socket: P,
+    gpio_lines: Vec<GpioLine>,
+) -> GpioBackendHandle {
     let gpio_socket = gpio_socket.as_ref().to_owned();
     let (backend_events_tx, device_events_rx) = unbounded();
     let (device_events_tx, backend_events_rx) = unbounded();
 
     let join_handle = spawn(move || {
-        let backend = Arc::new(RwLock::new(
-            VhostUserGpioBackend::new(backend_events_tx, backend_events_rx, gpio_lines)?
-        ));
+        let backend = Arc::new(RwLock::new(VhostUserGpioBackend::new(
+            backend_events_tx,
+            backend_events_rx,
+            gpio_lines,
+        )?));
 
         let mut daemon = VhostUserDaemon::new(
             String::from("nest-vhost-gpio-backend"),
             backend.clone(),
             GuestMemoryAtomic::new(GuestMemoryMmap::new()),
-        ).map_err(|_| GpioError::StartBackendFailed)?;
+        )
+        .map_err(|_| GpioError::StartBackendFailed)?;
 
-        daemon.serve(gpio_socket).map_err(|_| GpioError::StartBackendFailed)?;
+        daemon
+            .serve(gpio_socket)
+            .map_err(|_| GpioError::StartBackendFailed)?;
 
         Ok(())
     });
@@ -653,7 +692,6 @@ pub fn start_gpio_backend<P: AsRef<Path>>(gpio_socket: P, gpio_lines: Vec<GpioLi
         events_rx: device_events_rx,
     }
 }
-
 
 // Sub-module for messaging between the backend and the simulated device
 pub mod messaging {
@@ -671,9 +709,7 @@ pub mod messaging {
 #[allow(dead_code)]
 pub mod virtio {
     use std::mem::size_of;
-    use vm_memory::{
-        ByteValued, Le16, Le32,
-    };
+    use vm_memory::{ByteValued, Le16, Le32};
 
     /// Virtio GPIO Feature bits
     pub const VIRTIO_GPIO_F_IRQ: u16 = 0;
@@ -758,12 +794,8 @@ pub mod virtio {
         pub fn as_slice(&self) -> &[u8] {
             // SAFETY: The structure is C-compatible and has a fixed layout.
             unsafe {
-                std::slice::from_raw_parts(
-                    (self as *const Self) as *const u8,
-                    size_of::<Self>(),
-                )
+                std::slice::from_raw_parts((self as *const Self) as *const u8, size_of::<Self>())
             }
         }
     }
 }
-

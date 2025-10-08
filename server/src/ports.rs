@@ -2,8 +2,8 @@
 
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
-use anyhow::{anyhow, Result};
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use anyhow::{Result, anyhow};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use serde_json::Value;
 
 use crate::any_message_enum;
@@ -24,7 +24,11 @@ impl<M: Message> SystemPortBuilder<M> {
             PortQueueCapacity::Unbounded => unbounded(),
             PortQueueCapacity::Bounded(cap) => bounded(cap),
         };
-        Self { rx, local_tx, connections: Vec::new() }
+        Self {
+            rx,
+            local_tx,
+            connections: Vec::new(),
+        }
     }
 
     /// Connect the port to another [SystemPortBuilder].
@@ -103,16 +107,16 @@ impl<M: Message> SystemPort<M> {
         // Avoid unnecessary clones of msg
         // Use try_send to ignore channel full (avoid deadlocks) or disconnected
         match self.connections.len() {
-            0 => {},
+            0 => {}
             1 => {
                 let _ = self.connections[0].try_send(msg);
-            },
+            }
             n => {
-                for tx in &self.connections[..n-1] {
+                for tx in &self.connections[..n - 1] {
                     let _ = tx.try_send(msg.clone());
                 }
-                let _ = self.connections[n-1].try_send(msg);
-            },
+                let _ = self.connections[n - 1].try_send(msg);
+            }
         }
     }
 
@@ -174,12 +178,24 @@ any_message_enum!(AnyEnvironmentPort, EnvironmentPort);
 impl From<AnyEnvironmentVar> for AnyEnvironmentPort {
     fn from(value: AnyEnvironmentVar) -> Self {
         match value {
-            AnyEnvironmentVar::Int(env_var) => AnyEnvironmentPort::Int(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Float(env_var) => AnyEnvironmentPort::Float(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Bool(env_var) => AnyEnvironmentPort::Bool(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Bytes(env_var) => AnyEnvironmentPort::Bytes(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Text(env_var) => AnyEnvironmentPort::Text(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Json(env_var) => AnyEnvironmentPort::Json(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Int(env_var) => {
+                AnyEnvironmentPort::Int(EnvironmentPort::new(env_var))
+            }
+            AnyEnvironmentVar::Float(env_var) => {
+                AnyEnvironmentPort::Float(EnvironmentPort::new(env_var))
+            }
+            AnyEnvironmentVar::Bool(env_var) => {
+                AnyEnvironmentPort::Bool(EnvironmentPort::new(env_var))
+            }
+            AnyEnvironmentVar::Bytes(env_var) => {
+                AnyEnvironmentPort::Bytes(EnvironmentPort::new(env_var))
+            }
+            AnyEnvironmentVar::Text(env_var) => {
+                AnyEnvironmentPort::Text(EnvironmentPort::new(env_var))
+            }
+            AnyEnvironmentVar::Json(env_var) => {
+                AnyEnvironmentPort::Json(EnvironmentPort::new(env_var))
+            }
         }
     }
 }
@@ -190,7 +206,7 @@ any_message_enum!(AnyEnvironmentVar, EnvironmentVar);
 
 // Message
 
-/// Message sent between components. 
+/// Message sent between components.
 ///
 /// Available message types are:
 ///
@@ -200,7 +216,7 @@ any_message_enum!(AnyEnvironmentVar, EnvironmentVar);
 /// - [BytesMessage]
 /// - [TextMessage]
 /// - [JsonMessage]
-pub trait Message: Clone + Send + Sync + 'static { }
+pub trait Message: Clone + Send + Sync + 'static {}
 
 /// A message containing an `i32` value.
 #[derive(Clone, Debug)]
@@ -214,7 +230,7 @@ impl IntMessage {
     }
 }
 
-impl Message for IntMessage { }
+impl Message for IntMessage {}
 
 /// A message containing a `f32` value.
 #[derive(Clone, Debug)]
@@ -228,7 +244,7 @@ impl FloatMessage {
     }
 }
 
-impl Message for FloatMessage { }
+impl Message for FloatMessage {}
 
 /// A message containing an `bool` value.
 #[derive(Clone, Debug)]
@@ -242,7 +258,7 @@ impl BoolMessage {
     }
 }
 
-impl Message for BoolMessage { }
+impl Message for BoolMessage {}
 
 /// A message containing an `Vec<u8>` value.
 #[derive(Clone, Debug)]
@@ -256,7 +272,7 @@ impl BytesMessage {
     }
 }
 
-impl Message for BytesMessage { }
+impl Message for BytesMessage {}
 
 /// A message containing an `String` value.
 #[derive(Clone, Debug)]
@@ -270,7 +286,7 @@ impl TextMessage {
     }
 }
 
-impl Message for TextMessage { }
+impl Message for TextMessage {}
 
 /// A message containing a JSON value.
 #[derive(Clone, Debug)]
@@ -284,4 +300,4 @@ impl JsonMessage {
     }
 }
 
-impl Message for JsonMessage { }
+impl Message for JsonMessage {}

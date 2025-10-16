@@ -92,6 +92,29 @@ pub fn App() -> impl IntoView {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn get_ws_url(path: &str) -> String {
+    window()
+        .location()
+        .host()
+        .map(|host| {
+            let protocol = window()
+                .location()
+                .protocol()
+                .unwrap_or_else(|_| "http:".to_string());
+            
+            let ws_protocol = if protocol == "https:" { "wss" } else { "ws" };
+            format!("{}://{}{}", ws_protocol, host, path)
+        })
+        .unwrap_or_else(|_| format!("ws://localhost:3000{}", path))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn get_ws_url(path: &str) -> String {
+    // Fallback when running on the server (no browser window)
+    format!("ws://localhost:3000{}", path)
+}
+
 #[component]
 fn HomePage() -> impl IntoView {
     let UseWebSocketReturn {
@@ -102,7 +125,7 @@ fn HomePage() -> impl IntoView {
         close,
         ..
     } = use_websocket_with_options::<String, String, FromToStringCodec, _, _>(
-        "ws://localhost:3000/ws",
+        &get_ws_url("/ws"),
         UseWebSocketOptions::default().immediate(true),
     );
 

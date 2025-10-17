@@ -92,8 +92,8 @@ pub fn App() -> impl IntoView {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-fn get_ws_url(path: &str) -> String {
+#[cfg(not(feature = "ssr"))]
+fn make_ws_url(path: &str) -> String {
     window()
         .location()
         .host()
@@ -109,8 +109,8 @@ fn get_ws_url(path: &str) -> String {
         .unwrap_or_else(|_| format!("ws://localhost:3000{}", path))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn get_ws_url(path: &str) -> String {
+#[cfg(feature = "ssr")]
+pub fn make_ws_url(path: &str) -> String {
     // Fallback when running on the server (no browser window)
     format!("ws://localhost:3000{}", path)
 }
@@ -125,7 +125,7 @@ fn HomePage() -> impl IntoView {
         close,
         ..
     } = use_websocket_with_options::<String, String, FromToStringCodec, _, _>(
-        &get_ws_url("/ws"),
+        &make_ws_url("/ws"),
         UseWebSocketOptions::default().immediate(true),
     );
 

@@ -27,6 +27,7 @@ impl SimulationBuilder {
                     PortTypeSpec::Bytes => AnySystemPortBuilder::Bytes(SystemPortBuilder::default()),
                     PortTypeSpec::Text => AnySystemPortBuilder::Text(SystemPortBuilder::default()),
                     PortTypeSpec::Json => AnySystemPortBuilder::Json(SystemPortBuilder::default()),
+                    PortTypeSpec::I2c => AnySystemPortBuilder::I2c(SystemPortBuilder::default()),
                 }))
                 .collect()
             );

@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::{Arc}};
 
-use api::{LogUpdate, NestApiAction, NestApiUpdate, ReadyStatusUpdate, RunningStatusUpdate, StatusUpdate};
+use api::{ErrorUpdate, EventUpdate, LogUpdate, NestApiAction, NestApiUpdate, ReadyStatusUpdate, RunningStatusUpdate, StatusUpdate};
 use axum::{extract::{ws::{Message, WebSocket}, FromRef, State, WebSocketUpgrade}, response::Response, routing::any, Router};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use leptos::prelude::*;
@@ -8,12 +8,13 @@ use leptos_axum::{generate_route_list, LeptosRoutes};
 use app::*;
 use tokio::sync::Mutex;
 
-use crate::{component::LogEntry, simulation::SimulationReceiver, simulator::{Simulator, SimulatorState}};
+use crate::{component::{ComponentEvent, LogEntry}, simulation::SimulationReceiver, simulator::{Simulator, SimulatorState}};
 
 #[derive(FromRef, Clone)]
 struct NestServerState {
     pub simulator: Arc<Mutex<Simulator>>,
     pub log_sender: tokio::sync::broadcast::Sender<(String, LogEntry)>,
+    pub event_sender: tokio::sync::broadcast::Sender<(String, ComponentEvent)>,
     pub leptos_options: LeptosOptions,
 }
 
@@ -72,10 +73,12 @@ impl NestServer {
         let leptos_options = conf.leptos_options;
 
         let (log_sender, _) = tokio::sync::broadcast::channel(1000);
+        let (event_sender, _) = tokio::sync::broadcast::channel(1000);
 
         let state = NestServerState {
             simulator: Arc::new(Mutex::new(self.simulator)),
             log_sender,
+            event_sender,
             leptos_options,
         };
 
@@ -135,6 +138,31 @@ async fn handle_websocket(socket: WebSocket, state: NestServerState) {
         }
     });
 
+    // Spawn event forwarding task
+    let mut event_receiver = state.event_sender.subscribe();
+    tokio::spawn({
+        let ws_sender = ws_sender.clone();
+        async move {
+            while let Ok((source, comp_event)) = event_receiver.recv().await {
+                let event = match comp_event {
+                    ComponentEvent::Error(e) => {
+                        println!("Error in component {}: {}", source, e);
+                        NestApiUpdate::Error(ErrorUpdate { message: e })
+                    }
+                    ComponentEvent::SimulationEvent { event, value } => {
+                        NestApiUpdate::Event(EventUpdate {
+                            component: source,
+                            event,
+                            data: value,
+                        })
+                    }
+                };
+                let event_json = serde_json::to_string(&event).unwrap();
+                let _ = ws_sender.lock().await.send(Message::Text(event_json.into())).await;
+            }
+        }
+    });
+
     while let Some(msg) = ws_receiver.next().await {
         if let Ok(msg) = msg {
             if let Message::Text(msg) = msg {
@@ -147,6 +175,8 @@ async fn handle_websocket(socket: WebSocket, state: NestServerState) {
                             sim.start().unwrap();
                             // Start log broadcaster
                             Broadcaster::start(sim.log_receiver().unwrap(), state.log_sender.clone());
+                            // Start event broadcaster
+                            Broadcaster::start(sim.event_receiver().unwrap(), state.event_sender.clone());
                         }
                         // Send new state
                         let api_state = serde_json::to_string(&NestApiUpdate::Status(state.into_status_update().await)).unwrap();

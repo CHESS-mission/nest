@@ -27,13 +27,9 @@ use vmm_sys_util::{
     eventfd::{EFD_NONBLOCK, EventFd},
 };
 
-use crate::component::qemu::i2c::{
-    messaging::{I2cOperation, I2cResponse, I2cTransaction},
-    virtio::{
-        I2cDescriptorChain, VIRTIO_I2C_F_ZERO_LENGTH_REQUEST, VIRTIO_I2C_FLAGS_M_RD,
-        VIRTIO_I2C_MSG_ERR, VIRTIO_I2C_MSG_OK, VirtioI2cInHdr, VirtioI2cOutHdr,
-    },
-};
+use crate::{component::qemu::i2c::virtio::{
+        I2cDescriptorChain, VirtioI2cInHdr, VirtioI2cOutHdr, VIRTIO_I2C_FLAGS_M_RD, VIRTIO_I2C_F_ZERO_LENGTH_REQUEST, VIRTIO_I2C_MSG_ERR, VIRTIO_I2C_MSG_OK
+    }, ports::{I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction}};
 
 /// Custom Error type relative to the vhost device i2c backend.
 #[derive(Error, Debug)]
@@ -182,13 +178,15 @@ impl VhostUserI2cBackend {
                 _ => (Vec::<u8>::new(), 0),
             };
 
-            reqs.push(I2cTransaction::Request {
-                addr: out_hdr.addr.to_native() >> 1,
-                op: match i2c_m_rd {
-                    true => I2cOperation::Read(len as usize),
-                    false => I2cOperation::Write(buf),
-                }
-            });
+            reqs.push(I2cTransaction::Request(
+                I2cRequest::new(
+                    out_hdr.addr.to_native() >> 1,
+                    match i2c_m_rd {
+                        true => I2cRequestOp::Read(len),
+                        false => I2cRequestOp::Write(buf),
+                    }
+                )
+            ));
         }
 
         // Send requests to simulated device and handle responses
@@ -216,7 +214,7 @@ impl VhostUserI2cBackend {
                 let desc_buf = descriptors[1];
 
                 // Write the data read from the I2C device
-                if let Ok(I2cTransaction::Response(I2cResponse::Read(buf))) = &responses[i] {
+                if let Ok(I2cTransaction::Response(I2cResponse { op: I2cResponseOp::Read(buf) })) = &responses[i] {
                     desc_chain
                         .memory()
                         .write(buf, desc_buf.addr())
@@ -379,43 +377,6 @@ pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration) -> I2
         join_handle,
         request_rx,
         response_tx
-    }
-}
-
-// Sub-module for messaging between the backend and the simulated device
-pub mod messaging {
-    use serde::{Deserialize, Serialize};
-
-    /// An I2C operation, part of a transfer.
-    #[derive(Debug, Clone)]
-    #[derive(Serialize, Deserialize)]
-    pub enum I2cOperation {
-        /// A write operation, containing the data to be written.
-        Write(Vec<u8>),
-        /// A read operation, indicating the number of bytes to read.
-        Read(usize),
-    }
-
-    /// A response sent from the simulated device back to the I2C backend.
-    #[derive(Debug, Clone)]
-    #[derive(Serialize, Deserialize)]
-    pub enum I2cResponse {
-        /// A write response, acknowledging that the data has been written.
-        Write,
-        /// A read response, with the content read from the device.
-        Read(Vec<u8>),
-    }
-
-    /// Represents an I2C transaction (request or response).
-    #[derive(Debug, Clone)]
-    #[derive(Serialize, Deserialize)]
-    pub enum I2cTransaction {
-        /// A request sent from the I2C backend to the simulated device.
-        /// - `addr`: The 7-bit I2C device address.
-        /// - `op`: The operation to perform.
-        Request { addr: u16, op: I2cOperation },
-        /// A response sent from the simulated device back to the I2C backend.
-        Response(I2cResponse),
     }
 }
 

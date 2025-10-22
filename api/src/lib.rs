@@ -160,6 +160,7 @@ pub enum PortTypeDTO {
     Bytes,
     Text,
     Json,
+    I2c,
 }
 
 #[derive(Clone, Debug)]

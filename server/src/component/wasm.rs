@@ -1,90 +1,38 @@
-use anyhow::{Result};
-use serde::Deserialize;
 use std::collections::HashMap;
+
+use anyhow::Result;
+use serde::Deserialize;
 use serde_json::json;
-use extism::{CurrentPlugin, Manifest, Plugin, PluginBuilder, UserData, Val, Wasm, PTR};
 
-use crate::{
-    component::{ComponentParams, HandlerStatus, Logger, MessageDispatcher},
-    ports::{BoolMessage, BytesMessage, FloatMessage, AnySystemPort, IntMessage, JsonMessage, TextMessage},
-    set_status, with_message_wrapper,
-};
+use wasmtime::component::*;
+use wasmtime::{Engine, Store};
 
-use super::{Component, ComponentHandle, ComponentHandleCommand};
+use crate::component::wasm::host::{FromWit, HostCtx, IntoWit};
+use crate::{component::{Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, MessageDispatcher}, ports::AnySystemPort, set_status, with_message_wrapper};
 
-// Ports output host function
-
-#[derive(Clone)]
-struct HostCtx { logger: Logger, port: AnySystemPort, import_name: String }
-
-fn host_emit(plugin: &mut CurrentPlugin, vals: &[Val], _rets: &mut [Val], ctx: UserData<HostCtx>) -> std::result::Result<(), extism::Error> {
-    let ctx_arc = ctx.get()?;
-    let HostCtx { ref logger, ref port, ref import_name } = *ctx_arc.lock().unwrap();
-
-    match port {
-        AnySystemPort::Int(port) => {
-            if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(IntMessage::new(msg));
-            }
-        },
-        AnySystemPort::Float(port) => {
-            if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(FloatMessage::new(msg));
-            }
-        },
-        AnySystemPort::Bool(port) => {
-            if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(BoolMessage::new(msg));
-            }
-        },
-        AnySystemPort::Bytes(port) => {
-            if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(format!("host env::{} -> \"{:?}\"", import_name, msg))?;
-                port.send(BytesMessage::new(msg));
-            }
-        },
-        AnySystemPort::Text(port) => {
-            if let Ok(msg) = plugin.memory_get_val::<&str>(&vals[0]) {
-                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(TextMessage::new(msg));
-            }
-        },
-        AnySystemPort::Json(port) => {
-            if let Ok(msg) = plugin.memory_get_val(&vals[0]) {
-                logger.info(format!("host env::{} -> \"{}\"", import_name, msg))?;
-                port.send(JsonMessage::new(msg));
-            }
-        },
-    }
-
-    Ok(())
-}
+mod host;
 
 // Config
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WasmComponentConfig {
-    /// Path or URL to the WASM module (wasm.module)
+    /// Path or URL to the WASM module
     pub module: String,
 }
 
-// State used by the dispatcher
+// State
 
-#[derive(Debug)]
 struct WasmComponentState {
-    pub plugin: Plugin,
     pub update_status: bool,
+    pub store: Store<HostCtx>,
 }
 
 // Component
 
 #[derive(Default)]
 pub struct WasmComponent {
-config: WasmComponentConfig,
+    config: WasmComponentConfig,
     ports: HashMap<String, AnySystemPort>,
 }
 
@@ -92,39 +40,12 @@ impl WasmComponent {}
 
 impl Component for WasmComponent {
     fn start(self: Box<Self>) -> Result<ComponentHandle> {
-        let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, status| {
+        let handle = ComponentHandle::start(move |command_receiver, event_sender, logger, status| {
             // Initialize status
             set_status!(status.wasm, json!({
                 "module": self.config.module,
                 "ports": self.ports.keys().collect::<Vec<_>>(),
             }))?;
-
-            // Announce start
-            logger.info("WASM component starting")?;
-
-            // Build the Extism plugin (lives in state)
-            let wasm_src = if self.config.module.starts_with("http://") || self.config.module.starts_with("https://") {
-                Wasm::url(&self.config.module)
-            } else {
-                Wasm::file(&self.config.module)
-            };
-            let manifest = Manifest::new([wasm_src]);
-
-            let mut builder = PluginBuilder::new(manifest).with_wasi(true);
-            // Register configured host imports: env::<function> routed to the mapped out port
-            for (port_name, port) in &self.ports {
-                let import_name = format!("{}_out", port_name);
-                let host_ctx = HostCtx { logger: logger.clone(), port: port.clone(), import_name: import_name.clone() };
-                builder = builder.with_function_in_namespace("env", import_name, [PTR], [], UserData::new(host_ctx), host_emit);
-            }
-
-            let plugin = match builder.build() {
-                Ok(p) => p,
-                Err(e) => {
-                    logger.error(format!("failed to build WASM plugin: {}", e))?;
-                    return Ok(());
-                }
-            };
 
             let mut dispatcher = MessageDispatcher::<WasmComponentState>::new();
 
@@ -150,31 +71,61 @@ impl Component for WasmComponent {
                 Ok(HandlerStatus::Ok)
             }));
 
+            // Build the Wasmtime instance
+            let engine = Engine::default();
+            // TODO: add URL support
+            let component = wasmtime::component::Component::from_file(&engine, self.config.module)?;
+
+            let host_ctx = HostCtx::new(logger.clone(), event_sender.clone());
+            let mut store = Store::new(&engine, host_ctx);
+            let mut linker = Linker::new(&engine);
+
+            // Make imports trap by default
+            linker.define_unknown_imports_as_traps(&component)?;
+            linker.allow_shadowing(true);
+
+            // Add host WIT interfaces to linker
+            host::nest::plugin::log::add_to_linker::<HostCtx, HasSelf<_>>(&mut linker, |ctx| ctx)?;
+
+            // Define imports
+            for (name, any_port) in &self.ports {
+                let import_name = format!("{}-out", name);
+                let any_port = any_port.clone();
+                with_message_wrapper!(AnySystemPort, any_port, |port| {
+                    linker.root().func_wrap(&import_name, move |_store, (msg,)| {
+                        port.send(M::from_wit(msg));
+                        Ok(())
+                    })?;
+                });
+            }
+
+            // Instantiate the component
+            let instance = linker.instantiate(&mut store, &component)?;
+
             // Register ports handlers
             for (name, any_port) in &self.ports {
-                let export_name = format!("{}_in", name);
                 let logger = &logger;
-                let status = &status;
                 with_message_wrapper!(AnySystemPort, any_port, |port| {
-                    dispatcher.register_system_port(port, Box::new(move |msg, state| {
-                        logger.info(format!("[{}] received input: \"{:?}\"", name, msg.data))?;
+                    let export_name = format!("{}-in", name);
+                    let port_in = instance.get_typed_func::<(_,), ()>(&mut store, &export_name).expect("Export not found");
 
-                        match state.plugin.call::<_, String>(&export_name, &msg.data) {
-                            Ok(result) => {
-                                if state.update_status {
-                                    set_status!(status.last.name, json!({ "in": msg.data, "out": result }))?;
-                                }
-                                logger.info(format!("export '{}' completed; out=\"{}\"", export_name, result))?;
-                            }
-                            Err(e) => { logger.error(format!("export '{}' failed: {}", export_name, e))?; }
+                    dispatcher.register_system_port(port, Box::new(move |msg, state| {
+                        if let Err(e) = port_in.call(&mut state.store, (msg.into_wit(),)) {
+                            logger.error(format!("Failed to call export {}: {}", &export_name, e))?;
                         }
+                        if let Err(e) = port_in.post_return(&mut state.store) {
+                            logger.error(format!("Post return failed for {}: {}", &export_name, e))?;
+                        }
+
                         Ok(HandlerStatus::Ok)
                     }));
                 });
             }
 
-            logger.info("WASM component ready")?;
-            dispatcher.start_dispatch(WasmComponentState { plugin, update_status: true })?;
+            // Starting
+            logger.info("WASM component starting")?;
+            dispatcher.start_dispatch(WasmComponentState { update_status: true, store })?;
+
             Ok(())
         });
 

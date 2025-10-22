@@ -2,9 +2,6 @@ mod instance;
 mod gpio;
 mod i2c;
 
-// Re-exports
-pub use crate::component::qemu::i2c::messaging::*;
-
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use serde::{Deserialize, Serialize};
@@ -14,9 +11,9 @@ use crate::{
     component::{
         qemu::{
             gpio::{messaging::GpioEvent, start_gpio_backend, GpioLine}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}
-        }, Component, ComponentHandle, ComponentParams, HandlerStatus, MessageDispatcher, ComponentHandleCommand
+        }, Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, MessageDispatcher
     },
-    ports::{BoolMessage, JsonMessage, SystemPort},
+    ports::{BoolMessage, I2cMessage, JsonMessage, SystemPort},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -72,11 +69,11 @@ pub struct QemuComponent {
     config: QemuComponentConfig,
     gpio_lines: Vec<GpioLine>,
     gpio_ports: Vec<SystemPort<BoolMessage>>,
-    i2c_port: SystemPort<JsonMessage>,
+    i2c_port: SystemPort<I2cMessage>,
 }
 
 impl QemuComponent {
-    pub fn new(config: QemuComponentConfig, gpio_ports: Vec<SystemPort<BoolMessage>>, i2c_port: SystemPort<JsonMessage>) -> Result<Self> {
+    pub fn new(config: QemuComponentConfig, gpio_ports: Vec<SystemPort<BoolMessage>>, i2c_port: SystemPort<I2cMessage>) -> Result<Self> {
         let mut gpio_lines = vec![GpioLine::default(); config.ngpio as usize];
         for (i, name) in &config.gpio_names {
             let idx: usize = i.parse()?;
@@ -158,7 +155,7 @@ impl Component for QemuComponent {
                 };
 
                 if let Some(port) = self.gpio_ports.get(line as usize) {
-                    port.send(BoolMessage::new(value));
+                    port.send(value);
                 } else {
                     logger.error(format!("GPIO line out of range: {}", line))?;
                 }
@@ -171,7 +168,7 @@ impl Component for QemuComponent {
             for (i, gpio_port) in self.gpio_ports.iter().enumerate() {
                 let gpio_backend_events_tx = &gpio_backend_handle.events_tx;
                 dispatcher.register_system_port(gpio_port, Box::new(move |msg, _state| {
-                    let gpio_value_high = msg.data;
+                    let gpio_value_high = msg;
 
                     let event = if gpio_value_high {
                         GpioEvent::ValueHigh(i as u16)
@@ -187,19 +184,14 @@ impl Component for QemuComponent {
 
             // Register i2c backend requests handler
             dispatcher.register(i2c_backend_handle.request_rx, Box::new(|req, _state| {
-                let i2c_request = serde_json::to_value(req)?;
-                self.i2c_port.send(JsonMessage::new(i2c_request));
+                self.i2c_port.send(req);
 
                 Ok(HandlerStatus::Ok)
             }));
 
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|resp, _state| {
-                let i2c_response = serde_json::from_value::<I2cTransaction>(resp.data);
-                match i2c_response {
-                    Ok(response) => i2c_backend_handle.response_tx.send(response)?,
-                    Err(_) => logger.error("Bad json received on i2c port")?,
-                }
+                i2c_backend_handle.response_tx.send(resp)?;
 
                 Ok(HandlerStatus::Ok)
             }));
@@ -227,7 +219,7 @@ impl Component for QemuComponent {
         // Get system ports from params
         for (key, value) in &params.system_ports {
             match key.as_str() {
-                "i2c" => i2c_port = value.as_json()?.clone(),
+                "i2c" => i2c_port = value.as_i2c()?.clone(),
                 _ => {
                     if let Some(i) = key.strip_prefix("gpio") {
                         if let Ok(idx) = i.parse::<usize>() {
@@ -250,61 +242,3 @@ impl Component for QemuComponent {
         QemuComponent::new(config, gpio_ports, i2c_port)
     }
 }
-
-// impl QemuComponent {
-//     fn test(self: Box<Self>) -> Result<ComponentHandle> {
-//         let gpio_socket = self.config.gpio_socket.as_ref().map(PathBuf::from).unwrap_or_else(||
-//             std::env::temp_dir().join(format!("vgpio-{}.sock", uuid::Uuid::new_v4()))
-//         );
-//
-//         let gpio_backend_handle = start_gpio_backend(&gpio_socket, self.gpio_lines);
-//
-//         let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, _status| {
-//             let mut qemu_config = QemuConfig::new(self.config.arch, self.config.mem_mb);
-//
-//             Ok(())
-//         });
-//
-//         Ok(handle)
-//     }
-// }
-//
-// impl Component for QemuComponent {
-//
-//     fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
-//         // Parse config parameters
-//         let config = serde_json::from_value::<QemuComponentConfig>(params.config().clone())?;
-//
-//         let mut gpio_ports = vec![SystemPort::default(); config.ngpio as usize];
-//         let mut i2c_port = SystemPort::default();
-//
-//         // Get system ports from params
-//         for (key, value) in &params.system_ports {
-//             match key.as_str() {
-//                 "i2c" => i2c_port = value.as_json()?.clone(),
-//                 _ => {
-//                     if let Some(i) = key.strip_prefix("gpio") {
-//                         if let Ok(idx) = i.parse::<usize>() {
-//                             if let Some(gpio_port) = gpio_ports.get_mut(idx) {
-//                                 *gpio_port = value.as_bool()?.clone();
-//                             } else {
-//                                 bail!("Gpio port {} out of range 0-{}", key, config.ngpio);
-//                             }
-//                         } else {
-//                             bail!("Unknown system port {} for QemuComponent", key);
-//                         }
-//                     } else {
-//                         bail!("Unknown system port {} for QemuComponent", key);
-//                     }
-//                 },
-//             }
-//         }
-//
-//         // Return the fully initialized component
-//         QemuComponent::new(config, gpio_ports, i2c_port)
-//     }
-//
-//     fn start(self: Box<Self>) -> Result<ComponentHandle> {
-//         todo!()
-//     }
-// }

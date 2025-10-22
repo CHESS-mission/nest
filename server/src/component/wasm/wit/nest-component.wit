@@ -1,0 +1,12 @@
+package nest:plugin;
+
+interface log {
+  info: func(msg: string);
+  warning: func(msg: string);
+  error: func(msg: string);
+}
+
+world nest-component {
+  import log;
+  import types;
+}

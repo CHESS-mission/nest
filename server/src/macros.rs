@@ -76,12 +76,41 @@ pub fn _get_or_create_json_path_mut<'a>(mut value: &'a mut Value, path: &[&str])
 macro_rules! with_message_wrapper {
     ($any_type:ident, $any_enum:expr, |$wrapper:ident| $body:block) => {
         match $any_enum {
-            $any_type::Int($wrapper) => $body,
-            $any_type::Float($wrapper) => $body,
-            $any_type::Bool($wrapper) => $body,
-            $any_type::Bytes($wrapper) => $body,
-            $any_type::Text($wrapper) => $body,
-            $any_type::Json($wrapper) => $body,
+            $any_type::Int($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::IntMessage;
+                $body
+            }
+            $any_type::Float($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::FloatMessage;
+                $body
+            }
+            $any_type::Bool($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::BoolMessage;
+                $body
+            }
+            $any_type::Bytes($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::BytesMessage;
+                $body
+            }
+            $any_type::Text($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::TextMessage;
+                $body
+            }
+            $any_type::Json($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::JsonMessage;
+                $body
+            }
+            $any_type::I2c($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::I2cMessage;
+                $body
+            }
         }
     };
 }
@@ -146,6 +175,7 @@ macro_rules! any_message_enum {
             Bytes($wrapper<BytesMessage>),
             Text($wrapper<TextMessage>),
             Json($wrapper<JsonMessage>),
+            I2c($wrapper<I2cMessage>),
         }
 
         impl $enum_name {
@@ -155,6 +185,7 @@ macro_rules! any_message_enum {
             $crate::impl_as_into_methods!($enum_name, $wrapper, Bytes, BytesMessage, as_bytes, as_bytes_mut, into_bytes);
             $crate::impl_as_into_methods!($enum_name, $wrapper, Text, TextMessage, as_text, as_text_mut, into_text);
             $crate::impl_as_into_methods!($enum_name, $wrapper, Json, JsonMessage, as_json, as_json_mut, into_json);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, I2c, I2cMessage, as_i2c, as_i2c_mut, into_i2c);
         }
     };
 }

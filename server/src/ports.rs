@@ -4,20 +4,19 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
-use serde_json::Value;
 
-use crate::any_message_enum;
+use crate::{any_message_enum};
 
 /// [SystemPort] builder for creating message channels and setting up connections
 /// with other ports.
 #[derive(Clone, Debug)]
-pub struct SystemPortBuilder<M: Message> {
+pub struct SystemPortBuilder<M: Clone + Send + Sync + 'static> {
     rx: Receiver<M>,
     local_tx: Sender<M>,
     connections: Vec<Sender<M>>,
 }
 
-impl<M: Message> SystemPortBuilder<M> {
+impl<M: Clone + Send + Sync + 'static> SystemPortBuilder<M> {
     /// Create a new [SystemPortBuilder] of given queue capacity.
     pub fn new(queue_capacity: PortQueueCapacity) -> Self {
         let (local_tx, rx) = match queue_capacity {
@@ -45,7 +44,7 @@ impl<M: Message> SystemPortBuilder<M> {
     }
 }
 
-impl<M: Message> Default for SystemPortBuilder<M> {
+impl<M: Clone + Send + Sync + 'static> Default for SystemPortBuilder<M> {
     fn default() -> Self {
         Self::new(PortQueueCapacity::Unbounded)
     }
@@ -68,6 +67,7 @@ impl AnySystemPortBuilder {
             AnySystemPortBuilder::Bytes(port) => port.connect_to(other.as_bytes()?),
             AnySystemPortBuilder::Text(port) => port.connect_to(other.as_text()?),
             AnySystemPortBuilder::Json(port) => port.connect_to(other.as_json()?),
+            AnySystemPortBuilder::I2c(port) => port.connect_to(other.as_i2c()?),
         }
         Ok(())
     }
@@ -81,18 +81,19 @@ impl AnySystemPortBuilder {
             AnySystemPortBuilder::Bytes(port) => AnySystemPort::Bytes(port.build()),
             AnySystemPortBuilder::Text(port) => AnySystemPort::Text(port.build()),
             AnySystemPortBuilder::Json(port) => AnySystemPort::Json(port.build()),
+            AnySystemPortBuilder::I2c(port) => AnySystemPort::I2c(port.build()),
         }
     }
 }
 
 /// Simple wrapper around crossbeam_channel receiver (one) and senders (many) with a Message type.
 #[derive(Clone, Debug)]
-pub struct SystemPort<M: Message> {
+pub struct SystemPort<M: Clone + Send + Sync + 'static> {
     rx: Receiver<M>,
     connections: Vec<Sender<M>>,
 }
 
-impl<M: Message> SystemPort<M> {
+impl<M: Clone + Send + Sync + 'static> SystemPort<M> {
     /// Create a new [SystemPort].
     pub fn new(rx: Receiver<M>, connections: Vec<Sender<M>>) -> Self {
         Self { rx, connections }
@@ -122,7 +123,7 @@ impl<M: Message> SystemPort<M> {
     }
 }
 
-impl<M: Message> Default for SystemPort<M> {
+impl<M: Clone + Send + Sync + 'static> Default for SystemPort<M> {
     fn default() -> Self {
         SystemPortBuilder::default().build()
     }
@@ -145,11 +146,11 @@ pub enum PortQueueCapacity {
 
 /// Simple read-only wrapper around an [EnvironmentVar].
 #[derive(Clone, Debug)]
-pub struct EnvironmentPort<M: Message> {
+pub struct EnvironmentPort<M: Clone + Send + Sync + 'static> {
     env_var: EnvironmentVar<M>,
 }
 
-impl<M: Message> EnvironmentPort<M> {
+impl<M: Clone + Send + Sync + 'static> EnvironmentPort<M> {
     /// Create a new [EnvironmentPort].
     pub fn new(env_var: EnvironmentVar<M>) -> Self {
         Self { env_var }
@@ -180,6 +181,7 @@ impl From<AnyEnvironmentVar> for AnyEnvironmentPort {
             AnyEnvironmentVar::Bytes(env_var) => AnyEnvironmentPort::Bytes(EnvironmentPort::new(env_var)),
             AnyEnvironmentVar::Text(env_var) => AnyEnvironmentPort::Text(EnvironmentPort::new(env_var)),
             AnyEnvironmentVar::Json(env_var) => AnyEnvironmentPort::Json(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::I2c(env_var) => AnyEnvironmentPort::I2c(EnvironmentPort::new(env_var)),
         }
     }
 }
@@ -200,88 +202,66 @@ any_message_enum!(AnyEnvironmentVar, EnvironmentVar);
 /// - [BytesMessage]
 /// - [TextMessage]
 /// - [JsonMessage]
-pub trait Message: Clone + Send + Sync + 'static { }
 
-/// A message containing an `i32` value.
-#[derive(Clone, Debug)]
-pub struct IntMessage {
-    pub data: i32,
+pub type IntMessage = i32;
+pub type FloatMessage = f32;
+pub type BoolMessage = bool;
+pub type BytesMessage = Vec<u8>;
+pub type TextMessage = String;
+pub type JsonMessage = serde_json::Value;
+pub type I2cMessage = I2cTransaction;
+
+/// Represents an I2C transaction (request or response).
+#[derive(Debug, Clone)]
+pub enum I2cTransaction {
+    /// An I2c request sent from the master to a device.
+    Request(I2cRequest),
+    /// A response sent from the device back to the master.
+    Response(I2cResponse),
 }
 
-impl IntMessage {
-    pub fn new(data: i32) -> Self {
-        Self { data }
+/// An I2c request.
+#[derive(Debug, Clone)]
+pub struct I2cRequest {
+    /// The 7-bit I2C device address.
+    pub addr: u16,
+    /// The requested operation (read or write).
+    pub op: I2cRequestOp,
+}
+
+impl I2cRequest {
+    pub fn new(addr: u16, op: I2cRequestOp) -> Self {
+        Self { addr, op }
     }
 }
 
-impl Message for IntMessage { }
-
-/// A message containing a `f32` value.
-#[derive(Clone, Debug)]
-pub struct FloatMessage {
-    pub data: f32,
+/// An I2C request operation.
+#[derive(Debug, Clone)]
+pub enum I2cRequestOp {
+    /// A write operation, containing the data to be written.
+    Write(Vec<u8>),
+    /// A read operation, indicating the number of bytes to read.
+    Read(u32),
 }
 
-impl FloatMessage {
-    pub fn new(data: f32) -> Self {
-        Self { data }
+/// An I2c response.
+#[derive(Debug, Clone)]
+pub struct I2cResponse {
+    /// The operation response (read or write).
+    pub op: I2cResponseOp,
+}
+
+impl I2cResponse {
+    pub fn new(op: I2cResponseOp) -> Self {
+        Self { op }
     }
 }
 
-impl Message for FloatMessage { }
-
-/// A message containing an `bool` value.
-#[derive(Clone, Debug)]
-pub struct BoolMessage {
-    pub data: bool,
+/// An I2C response operation.
+#[derive(Debug, Clone)]
+pub enum I2cResponseOp {
+    /// A write operation response (simple ACK).
+    Write,
+    /// A read operation response, with the data that was read.
+    Read(Vec<u8>),
 }
-
-impl BoolMessage {
-    pub fn new(data: bool) -> Self {
-        Self { data }
-    }
-}
-
-impl Message for BoolMessage { }
-
-/// A message containing an `Vec<u8>` value.
-#[derive(Clone, Debug)]
-pub struct BytesMessage {
-    pub data: Vec<u8>,
-}
-
-impl BytesMessage {
-    pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
-    }
-}
-
-impl Message for BytesMessage { }
-
-/// A message containing an `String` value.
-#[derive(Clone, Debug)]
-pub struct TextMessage {
-    pub data: String,
-}
-
-impl TextMessage {
-    pub fn new<S: Into<String>>(data: S) -> Self {
-        Self { data: data.into() }
-    }
-}
-
-impl Message for TextMessage { }
-
-/// A message containing a JSON value.
-#[derive(Clone, Debug)]
-pub struct JsonMessage {
-    pub data: Value,
-}
-
-impl JsonMessage {
-    pub fn new(data: Value) -> Self {
-        Self { data: data }
-    }
-}
-
-impl Message for JsonMessage { }

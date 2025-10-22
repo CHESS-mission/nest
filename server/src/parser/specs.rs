@@ -162,6 +162,7 @@ pub enum PortTypeSpec {
     Bytes,
     Text,
     Json,
+    I2c,
 }
 
 impl Into<PortTypeDTO> for PortTypeSpec {
@@ -173,6 +174,7 @@ impl Into<PortTypeDTO> for PortTypeSpec {
             PortTypeSpec::Bytes => PortTypeDTO::Bytes,
             PortTypeSpec::Text => PortTypeDTO::Text,
             PortTypeSpec::Json => PortTypeDTO::Json,
+            PortTypeSpec::I2c => PortTypeDTO::I2c,
         }
     }
 }

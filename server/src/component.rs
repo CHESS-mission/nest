@@ -10,7 +10,7 @@ use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
 use serde_json::Value;
 use time::OffsetDateTime;
 
-use crate::ports::{AnyEnvironmentPort, AnySystemPort, Message, SystemPort};
+use crate::ports::{AnyEnvironmentPort, AnySystemPort, SystemPort};
 
 // Component
 
@@ -129,7 +129,7 @@ impl<'a, S: 'a> MessageDispatcher<'a, S> {
     }
 
     /// Register a new [SystemPort] and callback.
-    pub fn register_system_port<M: Message>(&mut self, system_port: &SystemPort<M>, callback: Box<dyn Fn(M, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
+    pub fn register_system_port<M: Clone + Send + Sync + 'static>(&mut self, system_port: &SystemPort<M>, callback: Box<dyn Fn(M, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
         self.register(system_port.receiver().clone(), callback);
     }
 

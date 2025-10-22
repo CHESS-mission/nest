@@ -1,9 +1,9 @@
 use super::{Component, ComponentHandle, ComponentHandleCommand, SystemPort};
 use crate::{
     component::{
-        qemu::{I2cOperation, I2cTransaction, I2cResponse}, ComponentEvent, ComponentParams, HandlerStatus, MessageDispatcher
+        ComponentEvent, ComponentParams, HandlerStatus, MessageDispatcher
     },
-    ports::{BoolMessage, IntMessage, JsonMessage, TextMessage},
+    ports::{BoolMessage, I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction, IntMessage, I2cMessage, TextMessage},
     set_status,
 };
 use anyhow::{Result, bail};
@@ -54,7 +54,7 @@ pub struct TestComponent {
     print_port: SystemPort<TextMessage>,
     gpio0_port: SystemPort<BoolMessage>,
     gpio1_port: SystemPort<BoolMessage>,
-    i2c_port: SystemPort<JsonMessage>,
+    i2c_port: SystemPort<I2cMessage>,
 }
 
 impl TestComponent {
@@ -63,7 +63,7 @@ impl TestComponent {
         print_port: SystemPort<TextMessage>,
         gpio0_port: SystemPort<BoolMessage>,
         gpio1_port: SystemPort<BoolMessage>,
-        i2c_port: SystemPort<JsonMessage>) -> Self
+        i2c_port: SystemPort<I2cMessage>) -> Self
     {
         Self { config, cumsum_port, print_port, gpio0_port, gpio1_port, i2c_port }
     }
@@ -129,7 +129,7 @@ impl Component for TestComponent {
 
             // Register a handler for the cumsum port
             dispatcher.register_system_port(&self.cumsum_port, Box::new(|msg, state| {
-                state.current_sum += msg.data;
+                state.current_sum += msg;
                 let cumsum = self.config.initial_sum + state.current_sum;
 
                 if state.update_status {
@@ -140,7 +140,7 @@ impl Component for TestComponent {
                 logger.info(format!("New cumulative sum: {}", cumsum))?;
 
                 // Send a message through the component's print port
-                let output = TextMessage::new(format!("Cumulative sum: {}", cumsum));
+                let output = format!("Cumulative sum: {}", cumsum);
                 self.print_port.send(output);
 
                 Ok(HandlerStatus::Ok)
@@ -149,9 +149,9 @@ impl Component for TestComponent {
             // Register a simple handler for the print port. Note that in general components
             // should not use println, this is just for demonstration purposes.
             dispatcher.register_system_port(&self.print_port, Box::new(|msg, _state| {
-                println!("{} Got: {}", self.config.greeting, msg.data);
+                println!("{} Got: {}", self.config.greeting, msg);
                 // Send a simulation event with the received data
-                event_sender.send(ComponentEvent::sim_event("print", msg.data))?;
+                event_sender.send(ComponentEvent::sim_event("print", msg))?;
                 Ok(HandlerStatus::Ok)
             }));
 
@@ -165,7 +165,7 @@ impl Component for TestComponent {
 
             // Register i2c port handler
             dispatcher.register_system_port(&self.i2c_port, Box::new(|msg, state| {
-                let I2cTransaction::Request { addr, op } = serde_json::from_value(msg.data)?
+                let I2cTransaction::Request(I2cRequest { addr, op }) = msg
                 else {
                     // Not a request: ignore
                     return Ok(HandlerStatus::Ok);
@@ -177,26 +177,26 @@ impl Component for TestComponent {
                 }
 
                 let response = match op {
-                    I2cOperation::Write(buf) => {
+                    I2cRequestOp::Write(buf) => {
                         if buf.len() >= 1 {
                             state.current_sum += buf[0] as i32;
                         } else {
                             logger.warning("Received zero-length i2c write request")?
                         }
-                        serde_json::to_value(I2cTransaction::Response(I2cResponse::Write))?
+                        I2cTransaction::Response(I2cResponse::new(I2cResponseOp::Write))
                     }
-                    I2cOperation::Read(len) => {
+                    I2cRequestOp::Read(len) => {
                         let mut buf = Vec::new();
                         if len >= 1 {
                             buf.push((self.config.initial_sum + state.current_sum) as u8);
                         } else {
                             logger.warning("Received zero-length i2c read request")?
                         }
-                        serde_json::to_value(I2cTransaction::Response(I2cResponse::Read(buf)))?
+                        I2cTransaction::Response(I2cResponse::new(I2cResponseOp::Read(buf)))
                     }
                 };
 
-                self.i2c_port.send(JsonMessage::new(response));
+                self.i2c_port.send(response);
 
                 Ok(HandlerStatus::Ok)
             }));
@@ -224,7 +224,7 @@ impl Component for TestComponent {
                 "print" => test_component.print_port = value.as_text()?.clone(),
                 "gpio0" => test_component.gpio0_port = value.as_bool()?.clone(),
                 "gpio1" => test_component.gpio1_port = value.as_bool()?.clone(),
-                "i2c" => test_component.i2c_port = value.as_json()?.clone(),
+                "i2c" => test_component.i2c_port = value.as_i2c()?.clone(),
                 _ => bail!("Unknown system port {} for TestComponent", key),
             }
         }

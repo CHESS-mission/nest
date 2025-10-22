@@ -1,0 +1,30 @@
+package nest:plugin;
+
+interface types {
+  type bytes = list<u8>;
+  type json = string;
+
+  variant i2c-transaction {
+    request(i2c-request),
+    response(i2c-response),
+  }
+
+  record i2c-request {
+    addr: u16,
+    op: i2c-request-op,
+  }
+
+  variant i2c-request-op {
+    write(list<u8>),
+    read(u32),
+  }
+
+  record i2c-response {
+    op: i2c-response-op,
+  }
+
+  variant i2c-response-op {
+    write,
+    read(list<u8>),
+  }
+}

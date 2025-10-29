@@ -1,15 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
 use anyhow::{Result, bail};
 use crossbeam_channel::{Receiver, Select, TryRecvError};
 
 use crate::{
     component::{
-        Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, qemu::QemuComponent,
-        wasm::WasmComponent,
-    },
-    parser::parser_specs::{ComponentTypeSpec, PortTypeSpec, TopologySpec},
-    ports::{AnySystemPortBuilder, SystemPortBuilder},
+        qemu::QemuComponent, wasm::WasmComponent, Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry
+    }, parser::{ComponentTypeSpec, PortTypeSpec, TopologySpec}, ports::{AnySystemPortBuilder, SystemPortBuilder}
 };
 
 pub struct SimulationBuilder {
@@ -19,39 +16,19 @@ pub struct SimulationBuilder {
 impl SimulationBuilder {
     pub fn from_topology(topology: &TopologySpec) -> Result<Self> {
         // Create system ports
-        let mut system_ports: HashMap<String, HashMap<String, AnySystemPortBuilder>> =
-            HashMap::new();
+        let mut system_ports: HashMap<String, HashMap<String, AnySystemPortBuilder>> = HashMap::new();
         for comp in &topology.components {
-            system_ports.insert(
-                comp.name.clone(),
-                comp.system_ports
-                    .iter()
-                    .map(|port| {
-                        (
-                            port.name.to_owned(),
-                            match port.port_type {
-                                PortTypeSpec::Int => {
-                                    AnySystemPortBuilder::Int(SystemPortBuilder::default())
-                                }
-                                PortTypeSpec::Float => {
-                                    AnySystemPortBuilder::Float(SystemPortBuilder::default())
-                                }
-                                PortTypeSpec::Bool => {
-                                    AnySystemPortBuilder::Bool(SystemPortBuilder::default())
-                                }
-                                PortTypeSpec::Bytes => {
-                                    AnySystemPortBuilder::Bytes(SystemPortBuilder::default())
-                                }
-                                PortTypeSpec::Text => {
-                                    AnySystemPortBuilder::Text(SystemPortBuilder::default())
-                                }
-                                PortTypeSpec::Json => {
-                                    AnySystemPortBuilder::Json(SystemPortBuilder::default())
-                                }
-                            },
-                        )
-                    })
-                    .collect(),
+            system_ports.insert(comp.name.clone(), comp.system_ports
+                .iter()
+                .map(|port| (port.name.to_owned(), match port.port_type {
+                    PortTypeSpec::Int => AnySystemPortBuilder::Int(SystemPortBuilder::default()),
+                    PortTypeSpec::Float => AnySystemPortBuilder::Float(SystemPortBuilder::default()),
+                    PortTypeSpec::Bool => AnySystemPortBuilder::Bool(SystemPortBuilder::default()),
+                    PortTypeSpec::Bytes => AnySystemPortBuilder::Bytes(SystemPortBuilder::default()),
+                    PortTypeSpec::Text => AnySystemPortBuilder::Text(SystemPortBuilder::default()),
+                    PortTypeSpec::Json => AnySystemPortBuilder::Json(SystemPortBuilder::default()),
+                }))
+                .collect()
             );
         }
 
@@ -59,35 +36,23 @@ impl SimulationBuilder {
         for wire in &topology.wires {
             for (i, endpoint1) in wire.endpoints.iter().enumerate() {
                 for endpoint2 in &wire.endpoints[i + 1..] {
-                    let [comp1_opt, comp2_opt] =
-                        system_ports.get_disjoint_mut([&endpoint1.component, &endpoint2.component]);
-
+                    let [comp1_opt, comp2_opt] = system_ports.get_disjoint_mut([
+                        &endpoint1.component,
+                        &endpoint2.component,
+                    ]);
+                    
                     let Some(comp1) = comp1_opt else {
-                        bail!(
-                            "Component {} referenced in wire does not exist in topology.",
-                            endpoint1.component
-                        );
+                        bail!("Component {} referenced in wire does not exist in topology.", endpoint1.component);
                     };
                     let Some(comp2) = comp2_opt else {
-                        bail!(
-                            "Component {} referenced in wire does not exist in topology.",
-                            endpoint2.component
-                        );
+                        bail!("Component {} referenced in wire does not exist in topology.", endpoint2.component);
                     };
 
                     let Some(port1) = comp1.get_mut(&endpoint1.port) else {
-                        bail!(
-                            "Use of undeclared port {} of component {} in wire.",
-                            endpoint1.port,
-                            endpoint1.component
-                        );
+                        bail!("Use of undeclared port {} of component {} in wire.", endpoint1.port, endpoint1.component);
                     };
                     let Some(port2) = comp2.get_mut(&endpoint2.port) else {
-                        bail!(
-                            "Use of undeclared port {} of component {} in wire.",
-                            endpoint2.port,
-                            endpoint2.component
-                        );
+                        bail!("Use of undeclared port {} of component {} in wire.", endpoint2.port, endpoint2.component);
                     };
 
                     port1.connect_to(port2)?;
@@ -114,27 +79,17 @@ impl SimulationBuilder {
             // TODO: create environment ports
 
             match comp.component_type {
-                ComponentTypeSpec::Qemu => {
-                    components.insert(
-                        comp.name.clone(),
-                        Box::new(QemuComponent::from_params(&params)?),
-                    );
-                }
-                ComponentTypeSpec::Wasm => {
-                    components.insert(
-                        comp.name.clone(),
-                        Box::new(WasmComponent::from_params(&params)?),
-                    );
-                }
+                ComponentTypeSpec::Qemu => { components.insert(comp.name.clone(), Box::new(QemuComponent::from_params(&params)?)); },
+                ComponentTypeSpec::Wasm => { components.insert(comp.name.clone(), Box::new(WasmComponent::from_params(&params)?)); },
             }
         }
+
 
         Ok(SimulationBuilder { components })
     }
 
     pub fn start_simulation(self) -> Result<Simulation> {
-        let handles = self
-            .components
+        let handles = self.components
             .into_iter()
             .map(|(name, component)| Ok((name, component.start()?)))
             .collect::<Result<_>>()?;
@@ -165,26 +120,26 @@ impl Simulation {
     }
 
     /// Return a [SimulationReceiver] for transparently receiving logs from all components.
-    ///
+    /// 
     /// Note that multiple simulation log receivers will compete instead of each receiving all logs.
     pub fn log_receiver(&self) -> SimulationReceiver<LogEntry> {
         SimulationReceiver::new(
             self.component_handles
                 .iter()
                 .map(|(name, handle)| (name.clone(), handle.log_receiver().clone()))
-                .collect(),
+                .collect()
         )
     }
 
     /// Return a [SimulationReceiver] for transparently receiving events from all components.
-    ///
+    /// 
     /// Note that multiple simulation event receivers will compete instead of each receiving all logs.
     pub fn event_receiver(&self) -> SimulationReceiver<ComponentEvent> {
         SimulationReceiver::new(
             self.component_handles
                 .iter()
                 .map(|(name, handle)| (name.clone(), handle.event_receiver().clone()))
-                .collect(),
+                .collect()
         )
     }
 }
@@ -207,9 +162,7 @@ impl<T> SimulationReceiver<T> {
 
         let mut disconnected = Vec::new();
         let msg = loop {
-            if disconnected.len() >= self.receivers.len() {
-                break None;
-            }
+            if disconnected.len() >= self.receivers.len() { break None }
             let index = sel.ready();
             let (source, receiver) = &self.receivers[index];
 
@@ -228,7 +181,7 @@ impl<T> SimulationReceiver<T> {
             self.receivers.swap_remove(i);
         }
 
-        return msg;
+        return msg
     }
 
     // TODO: update to handle empty select panics
@@ -253,7 +206,7 @@ impl<T> SimulationReceiver<T> {
         };
 
         // Wait for at least one entry
-        while !handle_recv(sel.ready(), &mut sel) {}
+        while !handle_recv(sel.ready(), &mut sel) {};
 
         // Drain the rest without blocking
         while let Ok(index) = sel.try_ready() {

@@ -3,11 +3,7 @@ use std::mem;
 use thiserror::Error;
 use time::OffsetDateTime;
 
-use crate::{
-    component::{ComponentEvent, ComponentHandle, LogEntry},
-    parser::parser_specs::TopologySpec,
-    simulation::{Simulation, SimulationBuilder, SimulationReceiver},
-};
+use crate::{component::{ComponentEvent, ComponentHandle, LogEntry}, parser::TopologySpec, simulation::{Simulation, SimulationBuilder, SimulationReceiver}};
 
 /// Custom errors for simulator operations.
 #[derive(Debug, Error)]
@@ -54,9 +50,9 @@ enum InternalSimulatorState {
 impl InternalSimulatorState {
     fn to_external(&self) -> SimulatorState {
         match self {
-            InternalSimulatorState::Idle { .. } => SimulatorState::Idle,
-            InternalSimulatorState::Ready { .. } => SimulatorState::Ready,
-            InternalSimulatorState::Running { .. } => SimulatorState::Running,
+            InternalSimulatorState::Idle {..} => SimulatorState::Idle,
+            InternalSimulatorState::Ready {..} => SimulatorState::Ready,
+            InternalSimulatorState::Running {..} => SimulatorState::Running,
         }
     }
 }
@@ -68,9 +64,7 @@ pub struct Simulator {
 impl Simulator {
     /// Create a new Simulator in the Idle state.
     pub fn new() -> Self {
-        Self {
-            state: InternalSimulatorState::Idle,
-        }
+        Self { state: InternalSimulatorState::Idle }
     }
 
     /// Load a topology (Idle -> Ready).
@@ -92,23 +86,11 @@ impl Simulator {
                 let simulation = builder
                     .start_simulation()
                     .map_err(SimulatorError::StartSimulationFailed)?;
-                self.state = InternalSimulatorState::Running {
-                    simulation,
-                    started_at,
-                    topology,
-                };
+                self.state = InternalSimulatorState::Running { simulation, started_at, topology };
                 Ok(())
             }
-            InternalSimulatorState::Running {
-                simulation,
-                started_at,
-                topology,
-            } => {
-                self.state = InternalSimulatorState::Running {
-                    simulation,
-                    started_at,
-                    topology,
-                }; // Restore state
+            InternalSimulatorState::Running { simulation, started_at, topology } => {
+                self.state = InternalSimulatorState::Running { simulation, started_at, topology }; // Restore state
                 Err(SimulatorError::AlreadyRunning)
             }
             InternalSimulatorState::Idle => Err(SimulatorError::NotReady),
@@ -118,14 +100,8 @@ impl Simulator {
     /// Stop the simulation (Running -> Ready).
     pub fn stop(&mut self) -> Result<(), SimulatorError> {
         match mem::replace(&mut self.state, InternalSimulatorState::Idle) {
-            InternalSimulatorState::Running {
-                simulation,
-                started_at: _,
-                topology,
-            } => {
-                simulation
-                    .stop()
-                    .map_err(SimulatorError::StopSimulationFailed)?;
+            InternalSimulatorState::Running { simulation, started_at: _, topology } => {
+                simulation.stop().map_err(SimulatorError::StopSimulationFailed)?;
                 self.load_topology(topology)?;
                 Ok(())
             }
@@ -138,30 +114,24 @@ impl Simulator {
 
     /// Return a [SimulationReceiver] for transparently receiving logs from all components. Fails
     /// if the simulation is not running.
-    ///
+    /// 
     /// Note that multiple simulation log receivers will compete instead of each receiving all logs.
     pub fn log_receiver(&self) -> Result<SimulationReceiver<LogEntry>, SimulatorError> {
         match &self.state {
-            InternalSimulatorState::Running {
-                simulation,
-                started_at: _,
-                topology: _,
-            } => Ok(simulation.log_receiver()),
-            _ => Err(SimulatorError::NotRunning),
+            InternalSimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.log_receiver()),
+            _ => {
+                Err(SimulatorError::NotRunning)
+            }
         }
     }
 
     /// Return a [SimulationReceiver] for transparently receiving events from all components. Fails
     /// if the simulation is not running.
-    ///
+    /// 
     /// Note that multiple simulation events receivers will compete instead of each receiving all logs.
     pub fn event_receiver(&self) -> Result<SimulationReceiver<ComponentEvent>, SimulatorError> {
         match &self.state {
-            InternalSimulatorState::Running {
-                simulation,
-                started_at: _,
-                topology: _,
-            } => Ok(simulation.event_receiver()),
+            InternalSimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.event_receiver()),
             _ => Err(SimulatorError::NotRunning),
         }
     }
@@ -170,13 +140,10 @@ impl Simulator {
     /// if the simulation is not running.
     pub fn component_handle(&self, name: &str) -> Result<&ComponentHandle, SimulatorError> {
         match &self.state {
-            InternalSimulatorState::Running {
-                simulation,
-                started_at: _,
-                topology: _,
-            } => simulation
-                .handle(name)
-                .ok_or_else(|| SimulatorError::ComponentNotFound(name.into())),
+            InternalSimulatorState::Running { simulation, started_at: _, topology: _ } => {
+                simulation.handle(name)
+                    .ok_or_else(|| SimulatorError::ComponentNotFound(name.into()))
+            }
             _ => Err(SimulatorError::NotRunning),
         }
     }
@@ -190,15 +157,8 @@ impl Simulator {
     /// or running.
     pub fn topology(&self) -> Result<&TopologySpec, SimulatorError> {
         match &self.state {
-            InternalSimulatorState::Ready {
-                builder: _,
-                topology,
-            } => Ok(topology),
-            InternalSimulatorState::Running {
-                simulation: _,
-                started_at: _,
-                topology,
-            } => Ok(topology),
+            InternalSimulatorState::Ready { builder: _, topology } => Ok(topology),
+            InternalSimulatorState::Running { simulation: _, started_at: _, topology } => Ok(topology),
             _ => Err(SimulatorError::NoTopologyLoaded),
         }
     }
@@ -206,11 +166,7 @@ impl Simulator {
     /// Return the instant the simulation was started. Fails if the simulation is not running.
     pub fn started_time(&self) -> Result<OffsetDateTime, SimulatorError> {
         match self.state {
-            InternalSimulatorState::Running {
-                simulation: _,
-                started_at: started_time,
-                topology: _,
-            } => Ok(started_time),
+            InternalSimulatorState::Running { simulation: _, started_at: started_time, topology: _ } => Ok(started_time),
             _ => Err(SimulatorError::NotRunning),
         }
     }

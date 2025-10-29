@@ -1,27 +1,25 @@
 use time::OffsetDateTime;
 
 use api::{LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO};
-use icondata as i;
 use leptos::{html::Div, logging, prelude::*, server::codee::string::FromToStringCodec};
-use leptos_icons::Icon;
-use leptos_meta::{MetaTags, Stylesheet, Title, provide_meta_context};
+use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
-    StaticSegment,
     components::{Route, Router, Routes},
+    StaticSegment,
 };
-use leptos_use::{
-    UseWebSocketOptions, UseWebSocketReturn, core::ConnectionReadyState, use_websocket_with_options,
-};
+use leptos_use::{core::ConnectionReadyState, use_websocket_with_options, UseWebSocketOptions, UseWebSocketReturn};
+use leptos_icons::Icon;
+use icondata as i;
 
 #[derive(Clone, Debug)]
 pub enum SimulatorState {
     Idle,
     Ready {
-        topology: TopologyDTO,
+        topology: TopologyDTO
     },
     Running {
         topology: TopologyDTO,
-        started_at: OffsetDateTime,
+        started_at: OffsetDateTime
     },
 }
 
@@ -31,11 +29,11 @@ impl SimulatorState {
     }
 
     pub fn is_ready(&self) -> bool {
-        matches!(self, SimulatorState::Ready { .. })
+        matches!(self, SimulatorState::Ready {..})
     }
-
+    
     pub fn is_running(&self) -> bool {
-        matches!(self, SimulatorState::Running { .. })
+        matches!(self, SimulatorState::Running {..})
     }
 }
 
@@ -44,11 +42,11 @@ impl From<StatusUpdate> for SimulatorState {
         match value {
             StatusUpdate::Idle => SimulatorState::Idle,
             StatusUpdate::Ready(update) => SimulatorState::Ready {
-                topology: update.topology,
+                topology: update.topology
             },
             StatusUpdate::Running(update) => SimulatorState::Running {
                 topology: update.topology,
-                started_at: update.started_at,
+                started_at: update.started_at
             },
         }
     }
@@ -111,7 +109,7 @@ fn HomePage() -> impl IntoView {
     let (simulator_state, set_simulator_state) = signal(SimulatorState::Idle);
 
     let logs = RwSignal::new(Vec::new());
-
+    
     Effect::new(move |_| {
         message.with(move |message| {
             if let Some(message) = message {
@@ -119,9 +117,9 @@ fn HomePage() -> impl IntoView {
                 if let Ok(event) = serde_json::from_str(&message) {
                     logging::log!("A");
                     match event {
-                        NestApiUpdate::Status(update) => set_simulator_state.set(update.into()),
+                        NestApiUpdate::Status(update)=>set_simulator_state.set(update.into()),
                         NestApiUpdate::Event(event_update) => todo!(),
-                        NestApiUpdate::Log(log) => logs.update(|logs| logs.push(log)),
+                        NestApiUpdate::Log(log)=>logs.update(|logs|logs.push(log)),
                         NestApiUpdate::Error(error_update) => todo!(),
                     }
                 } else {
@@ -174,8 +172,7 @@ fn Header(
 ) -> impl IntoView {
     let connected = move || ws_ready_state.get() == ConnectionReadyState::Open;
 
-    let simulator_state = use_context::<ReadSignal<SimulatorState>>()
-        .expect("to have found the simulator state provided");
+    let simulator_state = use_context::<ReadSignal<SimulatorState>>().expect("to have found the simulator state provided");
 
     let start_stop_label = move || match *simulator_state.read() {
         SimulatorState::Running { .. } => "stop",
@@ -224,7 +221,10 @@ fn Header(
 }
 
 #[component]
-fn SidePanel(#[prop(into)] logs: RwSignal<Vec<LogUpdate>>) -> impl IntoView {
+fn SidePanel(
+    #[prop(into)]
+    logs: RwSignal<Vec<LogUpdate>>,
+) -> impl IntoView {
     #[derive(Clone, PartialEq)]
     enum Tab {
         Logs,
@@ -244,8 +244,7 @@ fn SidePanel(#[prop(into)] logs: RwSignal<Vec<LogUpdate>>) -> impl IntoView {
 
     let selected_tab = RwSignal::new(Tab::Logs);
 
-    let simulator_state = use_context::<ReadSignal<SimulatorState>>()
-        .expect("to have found the simulator state provided");
+    let simulator_state = use_context::<ReadSignal<SimulatorState>>().expect("to have found the simulator state provided");
 
     let (started_at, set_started_at) = signal(OffsetDateTime::UNIX_EPOCH);
 
@@ -349,7 +348,7 @@ fn SidePanel(#[prop(into)] logs: RwSignal<Vec<LogUpdate>>) -> impl IntoView {
 fn ConnectionWidget(
     ws_ready_state: Signal<ConnectionReadyState>,
     ws_connect: impl Fn() + 'static,
-    ws_disconnect: impl Fn() + 'static,
+    ws_disconnect: impl Fn() + 'static
 ) -> impl IntoView {
     let status = move || match ws_ready_state.get() {
         ConnectionReadyState::Connecting => "connecting...",
@@ -359,7 +358,7 @@ fn ConnectionWidget(
     };
 
     let connected = move || ws_ready_state.get() == ConnectionReadyState::Open;
-
+    
     let toggle_connection = move |_| {
         if connected() {
             ws_disconnect();
@@ -400,27 +399,26 @@ fn ConnectionWidget(
 
 #[component]
 fn Button(
-    #[prop(into)] label: Signal<String>,
-    #[prop(into, optional)] icon: Option<Signal<icondata_core::Icon>>,
-    #[prop(into, optional)] icon_color: Option<Signal<String>>,
+    #[prop(into)]
+    label: Signal<String>,
+    #[prop(into, optional)]
+    icon: Option<Signal<icondata_core::Icon>>,
+    #[prop(into, optional)]
+    icon_color: Option<Signal<String>>,
 ) -> impl IntoView {
-    let icon_view = move || {
-        icon.map(|icon| {
-            view! {
-                <div
-                    class=move || {
-                        let base = "mr-1 group-disabled:text-gray-300".to_owned();
-                        match icon_color {
-                            Some(color) => format!("{} {}", base, color.get()),
-                            None => base,
-                        }
-                    }
-                >
-                    <Icon icon={icon} width="1.2em" height="1.2em"/>
-                </div>
+    let icon_view = move || icon.map(|icon| view!{
+        <div
+            class=move || {
+                let base = "mr-1 group-disabled:text-gray-300".to_owned();
+                match icon_color {
+                    Some(color) => format!("{} {}", base, color.get()),
+                    None => base,
+                }
             }
-        })
-    };
+        >
+            <Icon icon={icon} width="1.2em" height="1.2em"/>
+        </div>
+    });
 
     view! {
         <button

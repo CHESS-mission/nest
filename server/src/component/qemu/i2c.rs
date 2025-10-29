@@ -8,15 +8,9 @@
 // Modifications made in 2025 by Nathan Felber
 // Adapted for use in NEST
 
-use std::{
-    convert, io,
-    path::Path,
-    sync::{Arc, RwLock},
-    thread::{JoinHandle, spawn},
-    time::Duration,
-};
+use std::{convert, io, path::Path, sync::{Arc, RwLock}, thread::{spawn, JoinHandle}, time::Duration};
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use thiserror::Error;
 use vhost::vhost_user::{VhostUserProtocolFeatures, VhostUserVirtioFeatures};
 use vhost_user_backend::{VhostUserBackendMut, VhostUserDaemon, VringRwLock, VringT};
@@ -94,11 +88,7 @@ pub struct VhostUserI2cBackend {
 
 impl VhostUserI2cBackend {
     /// Create a new [VhostUserI2cBackend].
-    pub fn new(
-        request_tx: Sender<I2cTransaction>,
-        response_rx: Receiver<I2cTransaction>,
-        timeout: Duration,
-    ) -> Result<Self> {
+    pub fn new(request_tx: Sender<I2cTransaction>, response_rx: Receiver<I2cTransaction>, timeout: Duration) -> Result<Self> {
         Ok(Self {
             event_idx: false,
             exit_event: EventFd::new(EFD_NONBLOCK).map_err(|_| I2cError::EventFdFailed)?,
@@ -152,9 +142,7 @@ impl VhostUserI2cBackend {
 
             let desc_in_hdr = descriptors[descriptors.len() - 1];
             if !desc_in_hdr.is_write_only() {
-                return Err(I2cError::UnexpectedReadableDescriptor(
-                    descriptors.len() - 1,
-                ));
+                return Err(I2cError::UnexpectedReadableDescriptor(descriptors.len() - 1));
             }
 
             if desc_in_hdr.len() as usize != size_of::<u8>() {
@@ -199,7 +187,7 @@ impl VhostUserI2cBackend {
                 op: match i2c_m_rd {
                     true => I2cOperation::Read(len as usize),
                     false => I2cOperation::Write(buf),
-                },
+                }
             });
         }
 
@@ -265,9 +253,7 @@ impl VhostUserI2cBackend {
 
         if self.process_requests(requests, vring)? {
             // Send notification once all the requests are processed
-            vring
-                .signal_used_queue()
-                .map_err(|_| I2cError::NotificationFailed)?;
+            vring.signal_used_queue().map_err(|_| I2cError::NotificationFailed)?;
         }
 
         Ok(())
@@ -374,22 +360,17 @@ pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration) -> I2
     let (response_tx, response_rx) = unbounded();
 
     let join_handle = spawn(move || {
-        let backend = Arc::new(RwLock::new(VhostUserI2cBackend::new(
-            request_tx,
-            response_rx,
-            timeout,
-        )?));
+        let backend = Arc::new(RwLock::new(
+            VhostUserI2cBackend::new(request_tx, response_rx, timeout)?,
+        ));
 
         let mut daemon = VhostUserDaemon::new(
             String::from("nest-vhost-i2c-backend"),
             backend.clone(),
             GuestMemoryAtomic::new(GuestMemoryMmap::new()),
-        )
-        .map_err(|_| I2cError::StartBackendFailed)?;
+        ).map_err(|_| I2cError::StartBackendFailed)?;
 
-        daemon
-            .serve(i2c_socket)
-            .map_err(|_| I2cError::StartBackendFailed)?;
+        daemon.serve(i2c_socket).map_err(|_| I2cError::StartBackendFailed)?;
 
         Ok(())
     });
@@ -397,7 +378,7 @@ pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration) -> I2
     I2cBackendHandle {
         join_handle,
         request_rx,
-        response_tx,
+        response_tx
     }
 }
 
@@ -406,7 +387,8 @@ pub mod messaging {
     use serde::{Deserialize, Serialize};
 
     /// An I2C operation, part of a transfer.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
+    #[derive(Serialize, Deserialize)]
     pub enum I2cOperation {
         /// A write operation, containing the data to be written.
         Write(Vec<u8>),
@@ -415,7 +397,8 @@ pub mod messaging {
     }
 
     /// A response sent from the simulated device back to the I2C backend.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
+    #[derive(Serialize, Deserialize)]
     pub enum I2cResponse {
         /// A write response, acknowledging that the data has been written.
         Write,
@@ -424,7 +407,8 @@ pub mod messaging {
     }
 
     /// Represents an I2C transaction (request or response).
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
+    #[derive(Serialize, Deserialize)]
     pub enum I2cTransaction {
         /// A request sent from the I2C backend to the simulated device.
         /// - `addr`: The 7-bit I2C device address.
@@ -472,3 +456,4 @@ pub mod virtio {
 
     pub type I2cDescriptorChain = DescriptorChain<GuestMemoryLoadGuard<GuestMemoryMmap<()>>>;
 }
+

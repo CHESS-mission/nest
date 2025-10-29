@@ -1,11 +1,11 @@
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 /// Custom Error type relative to QEMU.
@@ -18,10 +18,7 @@ pub enum QemuError {
     #[error("QEMU process failed to spawn: {0}")]
     ProcessSpawn(std::io::Error),
     #[error("Failed to connect to QMP socket at {path}: {source}")]
-    QmpConnect {
-        path: PathBuf,
-        source: std::io::Error,
-    },
+    QmpConnect { path: PathBuf, source: std::io::Error },
     #[error("Timed out waiting for QMP socket to become available")]
     QmpSocketTimeout,
     #[error("QMP negotiation failed")]
@@ -36,7 +33,7 @@ type Result<T> = std::result::Result<T, QemuError>;
 #[derive(Debug, Clone)]
 enum QemuArg {
     Option { name: String, value: String },
-    Flag(String),
+    Flag(String)
 }
 
 /// Represents the configuration for a QEMU instance.
@@ -53,8 +50,7 @@ pub struct QemuConfig {
 impl QemuConfig {
     /// Create a new configuration.
     pub fn new(arch: String, memory_mb: u32) -> Self {
-        let qmp_socket_path =
-            std::env::temp_dir().join(format!("qmp-{}.sock", uuid::Uuid::new_v4()));
+        let qmp_socket_path = std::env::temp_dir().join(format!("qmp-{}.sock", uuid::Uuid::new_v4()));
 
         Self {
             arch,
@@ -68,10 +64,7 @@ impl QemuConfig {
 
     /// Add a command-line option.
     pub fn add_option<N: Into<String>, V: Into<String>>(&mut self, name: N, value: V) {
-        self.extra_args.push(QemuArg::Option {
-            name: name.into(),
-            value: value.into(),
-        });
+        self.extra_args.push(QemuArg::Option { name: name.into(), value: value.into() });
     }
 
     /// Add a command-line flag.
@@ -113,7 +106,7 @@ impl QemuInstance {
 
         // Set memory size
         cmd.arg("-m").arg(config.memory_mb.to_string());
-
+        
         // Append extra args
         for arg in &config.extra_args {
             match arg {
@@ -128,10 +121,7 @@ impl QemuInstance {
         }
 
         // Configure vhost-user shared memory backend file
-        let mem_backend_file_arg = format!(
-            "memory-backend-file,id=mem,size={}M,mem-path=/dev/shm,share=on",
-            config.memory_mb
-        );
+        let mem_backend_file_arg = format!("memory-backend-file,id=mem,size={}M,mem-path=/dev/shm,share=on", config.memory_mb);
         cmd.arg("-object").arg(mem_backend_file_arg);
         cmd.arg("-numa").arg("node,memdev=mem");
 
@@ -139,16 +129,14 @@ impl QemuInstance {
         if let Some(socket) = &config.gpio_backend_socket {
             let chardev_arg = format!("socket,path={},id=vgpio", socket.display());
             cmd.arg("-chardev").arg(chardev_arg);
-            cmd.arg("-device")
-                .arg("vhost-user-gpio-pci,chardev=vgpio,id=gpio");
+            cmd.arg("-device").arg("vhost-user-gpio-pci,chardev=vgpio,id=gpio");
         }
 
         // Configure vhost-user i2c
         if let Some(socket) = &config.i2c_backend_socket {
             let chardev_arg = format!("socket,path={},id=vi2c", socket.display());
             cmd.arg("-chardev").arg(chardev_arg);
-            cmd.arg("-device")
-                .arg("vhost-user-i2c-pci,chardev=vi2c,id=i2c");
+            cmd.arg("-device").arg("vhost-user-i2c-pci,chardev=vi2c,id=i2c");
         }
 
         // Configure qmp
@@ -258,13 +246,12 @@ struct QmpResponse {
     error: Option<Value>,
 }
 
+
 impl QmpClient {
     /// Connect to the QMP Unix socket and performs the initial capabilities negotiation.
     fn connect(path: &Path) -> Result<Self> {
-        let stream = UnixStream::connect(path).map_err(|e| QemuError::QmpConnect {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+        let stream = UnixStream::connect(path)
+            .map_err(|e| QemuError::QmpConnect { path: path.to_path_buf(), source: e })?;
         let mut client = Self {
             stream: BufReader::new(stream),
         };
@@ -295,7 +282,7 @@ impl QmpClient {
 
         let mut response_str = String::new();
         self.stream.read_line(&mut response_str)?;
-
+        
         let response: QmpResponse = serde_json::from_str(&response_str)?;
 
         if let Some(err) = response.error {

@@ -210,7 +210,7 @@ impl VhostUserI2cBackend {
             let desc_in_hdr = descriptors[descriptors.len() - 1];
             let mut len = size_of::<VirtioI2cInHdr>() as u32;
 
-            if descriptors.len() == 3 {
+            if descriptors.len() == 3 && in_hdr.status == VIRTIO_I2C_MSG_OK {
                 let desc_buf = descriptors[1];
 
                 // Write the data read from the I2C device
@@ -221,9 +221,7 @@ impl VhostUserI2cBackend {
                         .map_err(|_| I2cError::DescriptorWriteFailed)?;
                 }
 
-                if in_hdr.status == VIRTIO_I2C_MSG_OK {
-                    len += desc_buf.len();
-                }
+                len += desc_buf.len();
             }
 
             // Write the transfer status

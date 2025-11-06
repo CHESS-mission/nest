@@ -7,6 +7,7 @@
 - [ ] example topologies for testing
 - [ ] allow for the accepting of URLs
 - [ ] add command line options, require topology as an argument
+- [ ] fix the reused code for parsing component ports
  
 ## Overview
 A Topology file defines the topology for the simulation on the serverside of **nest**, and define all connections and components that the server must handle during the simulation.

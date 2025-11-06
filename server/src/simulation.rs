@@ -6,7 +6,7 @@ use crossbeam_channel::{Receiver, Select, TryRecvError};
 use crate::{
     component::{
         qemu::QemuComponent, wasm::WasmComponent, Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry
-    }, parser::{ComponentTypeSpec, PortTypeSpec, TopologySpec}, ports::{AnySystemPortBuilder, SystemPortBuilder}
+    }, parser::specs::{ComponentTypeSpec, PortTypeSpec, TopologySpec}, ports::{AnySystemPortBuilder, SystemPortBuilder}
 };
 
 pub struct SimulationBuilder {

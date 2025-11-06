@@ -1,130 +1,47 @@
-pub mod parser_error;
-pub mod parser_specs;
+pub mod error;
+pub mod specs;
 
 use std::{fs, str::FromStr};
 
 use yaml_rust2::{Yaml, YamlLoader};
 
-use parser_error::ParserError;
+use error::*;
 
-use parser_specs::*;
+use specs::*;
 
 impl TopologySpec {
     pub fn from_yaml(root: &str) -> Result<Self, ParserError> {
         match YamlLoader::load_from_str(match &fs::read_to_string(root) {
             Ok(r) => r,
-            Err(_) => return Err(ParserError::DocumentFormat),
+            Err(_) => return Err(ParserError::InvalidFormat),
         }) {
             Ok(doc) => match doc.last() {
-                Some(yaml) => parse_components(yaml),
-                None => Err(ParserError::DocumentFormat),
+                Some(yaml) => parse_topology(yaml),
+                None => Err(ParserError::InvalidFormat),
             },
-            Err(_) => return Err(ParserError::DocumentFormat),
+            Err(_) => return Err(ParserError::InvalidFormat),
         }
     }
 }
 
 ///
-/// Builds a Component from a path to a yaml config file.
+/// Parses a Topology from a loaded Topology YAML file.
 ///
-fn parse_components(root: &Yaml) -> Result<TopologySpec, ParserError> {
+fn parse_topology(root: &Yaml) -> Result<TopologySpec, ParserError> {
     let mut environement_variables: Vec<EnvironmentVarSpec> = Vec::new();
-
-    if let Some(env_vars) = root["environment_variables"]
-        .as_vec(){
-            for env_var in env_vars {
-        let name = env_var["name"]
-            .as_str()
-            .ok_or(ParserError::MissingField("environment_variable.name"))?;
-
-        let port_type = env_var["type"]
-            .as_str()
-            .ok_or(ParserError::MissingField("environment_variable.port_type"))?
-            .parse::<PortTypeSpec>()?;
-        environement_variables.push(EnvironmentVarSpec::new(name, port_type))
+    if let Some(env_vars) = root["environment_variables"].as_vec() {
+        for env_var in env_vars {
+            environement_variables.push(parse_environment_variable(env_var)?)
         }
     }
-    
 
     let comps = root["components"]
         .as_vec()
         .ok_or(ParserError::MissingField("components"))?;
 
     let mut all_components: Vec<ComponentSpec> = Vec::new();
-
     for comp in comps {
-        let name = comp["name"]
-            .as_str()
-            .ok_or(ParserError::MissingField("name"))?;
-
-        let mut config_map = serde_json::Map::new();
-
-        if let Some(cfg) = comp["config"].as_hash() {
-            for (k, v) in cfg {
-                if let Some(key) = k.as_str() {
-                    config_map.insert(key.to_string(), yaml_to_json(v));
-                }
-            }
-        }
-
-        let config = serde_json::Value::Object(config_map);
-
-        let mut system_ports: Vec<SystemPortSpec> = Vec::new();
-
-        if let Some(sys_ports) = comp["ports"]["system"].as_vec() {
-            for entry in sys_ports {
-                let port_name = entry["name"]
-                    .as_str()
-                    .ok_or(ParserError::MissingField("ports.system.name"))?;
-                if port_name.trim().is_empty() {
-                    return Err(ParserError::ValidationError(
-                        "ports.system.name cannot be empty",
-                    ));
-                }
-
-                let port_type = entry["type"]
-                    .as_str()
-                    .ok_or(ParserError::MissingField("ports.system.type"))?
-                    .parse::<PortTypeSpec>()?;
-
-                system_ports.push(SystemPortSpec::new(port_name, port_type))
-            }
-        }
-
-        let mut environment_ports: Vec<EnvironmentPortSpec> = Vec::new();
-        if let Some(env_ports) = comp["ports"]["environment"].as_vec() {
-            for entry in env_ports {
-                let port_name = entry["name"]
-                    .as_str()
-                    .ok_or(ParserError::MissingField("ports.environment.name"))?;
-
-                if port_name.trim().is_empty() {
-                    return Err(ParserError::ValidationError(
-                        "ports.environment.name cannot be empty",
-                    ));
-                }
-
-                let port_type = entry["type"]
-                    .as_str()
-                    .ok_or(ParserError::MissingField("ports.environment.type"))?
-                    .parse::<PortTypeSpec>()?;
-
-                environment_ports.push(EnvironmentPortSpec::new(port_name, port_type));
-            }
-        }
-
-        let component_type = comp["type"]
-            .as_str()
-            .ok_or(ParserError::ValidationError("components must have a type"))?
-            .parse::<ComponentTypeSpec>()?;
-
-        all_components.push(ComponentSpec::new(
-            name,
-            component_type,
-            config,
-            system_ports,
-            environment_ports,
-        ));
+        all_components.push(parse_component(comp)?);
     }
 
     let wires = root["wires"]
@@ -132,23 +49,8 @@ fn parse_components(root: &Yaml) -> Result<TopologySpec, ParserError> {
         .ok_or(ParserError::MissingField("wires"))?;
 
     let mut connected_wires: Vec<WireSpec> = Vec::new();
-
     for wire in wires {
-        let mut curr_wire: Vec<WireEndpointSpec> = Vec::new();
-        let endpoints = wire
-            .as_vec()
-            .ok_or(ParserError::MissingField("wires.endpoints"))?;
-
-        for endpoint in endpoints {
-            let component = endpoint["component"]
-                .as_str()
-                .ok_or(ParserError::MissingField("wires.component"))?;
-            let port = endpoint["port"]
-                .as_str()
-                .ok_or(ParserError::MissingField("wires.port"))?;
-            curr_wire.push(WireEndpointSpec::new(component, port))
-        }
-        connected_wires.push(WireSpec::new(curr_wire));
+        connected_wires.push(parse_wire_endpoints(wire)?);
     }
 
     Ok(TopologySpec::new(
@@ -156,6 +58,136 @@ fn parse_components(root: &Yaml) -> Result<TopologySpec, ParserError> {
         all_components,
         connected_wires,
     ))
+}
+
+// subfunctions
+
+// env
+fn parse_environment_variable(env_var: &Yaml) -> Result<EnvironmentVarSpec, ParserError> {
+    let name = env_var["name"]
+        .as_str()
+        .ok_or(ParserError::MissingField("environment_variable.name"))?;
+
+    let port_type = env_var["type"]
+        .as_str()
+        .ok_or(ParserError::MissingField("environment_variable.port_type"))?
+        .parse::<PortTypeSpec>()?;
+
+    Ok(EnvironmentVarSpec::new(name, port_type))
+}
+
+// components
+fn parse_component(comp: &Yaml) -> Result<ComponentSpec, ParserError> {
+    let name = comp["name"]
+        .as_str()
+        .ok_or(ParserError::MissingField("name"))?;
+
+    let mut config_map = serde_json::Map::new();
+    if let Some(cfg) = comp["config"].as_hash() {
+        for (k, v) in cfg {
+            if let Some(key) = k.as_str() {
+                config_map.insert(key.to_string(), yaml_to_json(v));
+            }
+        }
+    }
+    let config = serde_json::Value::Object(config_map);
+
+    let mut system_ports: Vec<SystemPortSpec> = Vec::new();
+
+    if let Some(sys_ports) = comp["ports"]["system"].as_vec() {
+        for sys_port in sys_ports {
+            system_ports.push(parse_system_port(sys_port)?)
+        }
+    }
+
+    let mut environment_ports: Vec<EnvironmentPortSpec> = Vec::new();
+    if let Some(env_ports) = comp["ports"]["environment"].as_vec() {
+        for env_port in env_ports {
+            environment_ports.push(parse_environment_port(env_port)?);
+        }
+    }
+
+    let component_type = comp["type"]
+        .as_str()
+        .ok_or(ParserError::ValidationError("components must have a type"))?
+        .parse::<ComponentTypeSpec>()?;
+
+    Ok(ComponentSpec::new(
+        name,
+        component_type,
+        config,
+        system_ports,
+        environment_ports,
+    ))
+}
+
+// these two can be genericised, but i cant figure out how to get the errors to work
+// maybe some sort of ComponentContext in /parser/error.rs but it doesnt seem useful
+// as there isnt much chance for there to be more components added anytime soon.
+// attempting to do something of the same sort as the porttype structs run into the same issue
+// maybe ill come back another day and find a better solution for this, but so far it works
+
+// env port
+fn parse_environment_port(env_port: &Yaml) -> Result<EnvironmentPortSpec, ParserError> {
+    let port_name = env_port["name"]
+        .as_str()
+        .ok_or(ParserError::MissingField("ports.environment.name"))?;
+
+    if port_name.trim().is_empty() {
+        return Err(ParserError::ValidationError(
+            "ports.environment.name cannot be empty",
+        ));
+    }
+
+    let port_type = env_port["type"]
+        .as_str()
+        .ok_or(ParserError::MissingField("ports.environment.type"))?
+        .parse::<PortTypeSpec>()?;
+    Ok(EnvironmentPortSpec::new(port_name, port_type))
+}
+
+// sys port
+fn parse_system_port(sys_port: &Yaml) -> Result<SystemPortSpec, ParserError> {
+    let port_name = sys_port["name"]
+        .as_str()
+        .ok_or(ParserError::MissingField("ports.system.name"))?;
+
+    if port_name.trim().is_empty() {
+        return Err(ParserError::ValidationError(
+            "ports.system.name cannot be empty",
+        ));
+    }
+
+    let port_type = sys_port["type"]
+        .as_str()
+        .ok_or(ParserError::MissingField("ports.system.type"))?
+        .parse::<PortTypeSpec>()?;
+
+    Ok(SystemPortSpec::new(port_name, port_type))
+}
+
+
+// wires
+fn parse_wire_endpoints(wire: &Yaml) -> Result<WireSpec, ParserError> {
+    let mut curr_wire: Vec<WireEndpointSpec> = Vec::new();
+
+    // a topology without wire endpoints make little sense
+    // though it might be preferable to just throw a warning
+    let endpoints = wire
+        .as_vec()
+        .ok_or(ParserError::ValidationError("wires cannot be empty"))?;
+
+    for endpoint in endpoints {
+        let component = endpoint["component"]
+            .as_str()
+            .ok_or(ParserError::MissingField("wires.component"))?;
+        let port = endpoint["port"]
+            .as_str()
+            .ok_or(ParserError::MissingField("wires.port"))?;
+        curr_wire.push(WireEndpointSpec::new(component, port))
+    }
+
+    Ok(WireSpec::new(curr_wire))
 }
 
 // helper functions
@@ -210,3 +242,5 @@ impl FromStr for ComponentTypeSpec {
         })
     }
 }
+
+

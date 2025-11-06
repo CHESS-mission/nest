@@ -1,5 +1,5 @@
 use leptos::config::get_configuration;
-use server::{parser::parser_specs::TopologySpec, server::NestServer, simulator::Simulator};
+use server::{parser::specs::TopologySpec, server::NestServer, simulator::Simulator};
 
 #[tokio::main]
 async fn main() {
@@ -15,5 +15,5 @@ async fn main() {
 }
 
 fn create_topology() -> TopologySpec {
-    TopologySpec::from_yaml("test/test.yaml").unwrap()
+    TopologySpec::from_yaml("example/example.yaml").unwrap()
 }

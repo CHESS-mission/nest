@@ -3,7 +3,7 @@ use std::mem;
 use thiserror::Error;
 use time::OffsetDateTime;
 
-use crate::{component::{ComponentEvent, ComponentHandle, LogEntry}, parser::TopologySpec, simulation::{Simulation, SimulationBuilder, SimulationReceiver}};
+use crate::{component::{ComponentEvent, ComponentHandle, LogEntry}, parser::specs::TopologySpec, simulation::{Simulation, SimulationBuilder, SimulationReceiver}};
 
 /// Custom errors for simulator operations.
 #[derive(Debug, Error)]

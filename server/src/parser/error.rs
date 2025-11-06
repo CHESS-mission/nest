@@ -1,7 +1,7 @@
 #[derive(Debug)]
 pub enum ParserError {
     ParseError,
-    DocumentFormat,
+    InvalidFormat,
     MissingField(&'static str),
     InvalidType(&'static str),
     ValidationError(&'static str),

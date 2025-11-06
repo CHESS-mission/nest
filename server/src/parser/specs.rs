@@ -110,6 +110,11 @@ impl Into<ComponentTypeDTO> for ComponentTypeSpec {
     }
 }
 
+pub enum PortSpec{
+    SystemPortSpec,
+    EnvironmentPortSpec,
+}
+
 #[derive(Clone, Debug)]
 pub struct SystemPortSpec {
     pub name: String,

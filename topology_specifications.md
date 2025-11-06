@@ -2,19 +2,21 @@
 
 ## Todos:
 
-- [ ] file location for defaults? maybe a NEST_COMPONENTS_PATH env?
-- [ ] file naming scheme or + its upload procedure?
-- [ ] should we really be using paths?
+- [ ] NEST_COMPONENTS_PATH env
+- [ ] file naming scheme
+- [ ] example topologies for testing
+- [ ] allow for the accepting of URLs
+- [ ] add command line options, require topology as an argument
  
 ## Overview
 A Topology file defines the topology for the simulation on the serverside of **nest**, and define all connections and components that the server must handle during the simulation.
 
 It specifies:
-- **Environement variables** used by the system
+- **Environement variables** available within the simulation
 - **Components**, with their types, configurations and ports
 - **Wiring** between the components
 
-Default Topology config files should be placed at `./i/havent/decided/yet/please/help/` and is usually named after the situation it should set up such as `temperature_test.yaml`. This file is read at the start of any simulation.
+This file is read at the start of any simulation.
 
 ## Structure Summary
 
@@ -43,7 +45,7 @@ wires:                          # all wires
       port: <port_type>
 ```
 > [!NOTE]
-> YAML style lists are used since they are clearer to read than JSON style, especially in the case of the wires which contain nestled lists.
+> Consider using YAML style lists over JSON style for improved readability.
 
 - Port types must be one of 
     - `int`
@@ -54,8 +56,8 @@ wires:                          # all wires
     - `json`
 
 - Port groups must be one of: 
-    - `system_port`  
-    - `environment_port`.
+    - `system`  
+    - `environment`.
 
 ## Field Reference
 
@@ -99,7 +101,9 @@ Defines a singular component of the simulation.
 
 
 #### Example
-A QEMU component.
+
+A QEMU component instance.
+
 ```yaml
 components:
   - 
@@ -139,7 +143,7 @@ components:
 
 Defines interconnections between component ports.
 
-Each wire entry connects two components via matching port names and compatible types.
+Each wire entry connects two or more components through ports of compatible types.
 
 | Field       | Type   | Required | Description                     |
 | ----------- | ------ |----------| ------------------------------- |
@@ -169,7 +173,7 @@ wires:
 
 ## Validation Rules
 
-- Each component.name must be unique.
+- Each component name must be unique.
 
 - Ports connected in wires must exist in both components.
 
@@ -181,11 +185,12 @@ wires:
     - `text`
     - `json`
 
-- Port groups are currently only composed of `system_port` and `environment_port`, both of which are composed of a unique name and a port type.
+- Port groups are currently one of `system` and `environment`.
 
 
 ## Version History
 
-| Version | Date       | Changes                                                     |
-| ------- | ---------- | ----------------------------------------------------------- |
+| Version | Date       | Changes                                                       |
+| ------- | ---------- | -----------------------------------------------------------   |
 | v1.0    | 2025-10-10 | Initial structure for multi-component topology configuration. |
+| v1.1    | 2025-11-06 | Small changes in phrasing.                                    |

@@ -1,8 +1,9 @@
 package nest:plugin;
 
 interface types {
+  // System port types
+
   type bytes = list<u8>;
-  type json = string;
 
   variant i2c-transaction {
     request(i2c-request),
@@ -26,5 +27,43 @@ interface types {
   variant i2c-response-op {
     write,
     read(list<u8>),
+  }
+
+  // Environment port types
+
+  record vec2 {
+    x: f32,
+    y: f32,
+  }
+
+  record vec3 {
+    x: f32,
+    y: f32,
+    z: f32,
+  }
+
+  record quaternion {
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+  }
+
+  record tensor {
+    // Row-major
+    shape: list<u32>,
+    data: list<f32>,
+  }
+}
+
+interface errors {
+  variant init-error {
+    unknown-option(string),
+    invalid-value(string),
+  }
+
+  variant command-error {
+    unknown-command,
+    invalid-value(string),
   }
 }

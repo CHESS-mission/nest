@@ -7,8 +7,19 @@ use serde_json::json;
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
 
-use crate::component::wasm::host::{FromWit, HostCtx, IntoWit};
-use crate::{component::{Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, MessageDispatcher}, ports::AnySystemPort, set_status, with_message_wrapper};
+use crate::component::wasm::host::{
+    CommandError, FromWit, HostCtx, InitError, IntoWit, NestComponent,
+};
+use crate::ports::AnyEnvironmentPort;
+use crate::with_env_var_wrapper;
+use crate::{
+    component::{
+        Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus,
+        MessageDispatcher,
+    },
+    ports::AnySystemPort,
+    set_status, with_message_wrapper,
+};
 
 mod host;
 
@@ -19,6 +30,7 @@ mod host;
 pub struct WasmComponentConfig {
     /// Path or URL to the WASM module
     pub module: String,
+    pub options: Vec<(String, String)>,
 }
 
 // State
@@ -26,6 +38,7 @@ pub struct WasmComponentConfig {
 struct WasmComponentState {
     pub update_status: bool,
     pub store: Store<HostCtx>,
+    pub nest_component: NestComponent,
 }
 
 // Component
@@ -33,7 +46,8 @@ struct WasmComponentState {
 #[derive(Default)]
 pub struct WasmComponent {
     config: WasmComponentConfig,
-    ports: HashMap<String, AnySystemPort>,
+    sys_ports: HashMap<String, AnySystemPort>,
+    env_ports: HashMap<String, AnyEnvironmentPort>,
 }
 
 impl WasmComponent {}
@@ -44,7 +58,7 @@ impl Component for WasmComponent {
             // Initialize status
             set_status!(status.wasm, json!({
                 "module": self.config.module,
-                "ports": self.ports.keys().collect::<Vec<_>>(),
+                "ports": self.sys_ports.keys().collect::<Vec<_>>(),
             }))?;
 
             let mut dispatcher = MessageDispatcher::<WasmComponentState>::new();
@@ -65,7 +79,12 @@ impl Component for WasmComponent {
                         state.update_status = false;
                     }
                     ComponentHandleCommand::SimulatorCommand { command, args } => {
-                        todo!();
+                        if let Err(error) = state.nest_component.call_on_command(&mut state.store, &command, &args.to_string())? {
+                            match error {
+                                CommandError::UnknownCommand => logger.error(format!("Unknown command: {}", command))?,
+                                CommandError::InvalidValue(err_msg) => logger.error(format!("Invalid value for command {}: {}", command, err_msg))?,
+                            }
+                        }
                     }
                 }
                 Ok(HandlerStatus::Ok)
@@ -85,10 +104,10 @@ impl Component for WasmComponent {
             linker.allow_shadowing(true);
 
             // Add host WIT interfaces to linker
-            host::nest::plugin::log::add_to_linker::<HostCtx, HasSelf<_>>(&mut linker, |ctx| ctx)?;
+            NestComponent::add_to_linker::<HostCtx, HasSelf<_>>(&mut linker, |ctx| ctx)?;
 
-            // Define imports
-            for (name, any_port) in &self.ports {
+            // Define system ports imports
+            for (name, any_port) in &self.sys_ports {
                 let import_name = format!("{}-out", name);
                 let any_port = any_port.clone();
                 with_message_wrapper!(AnySystemPort, any_port, |port| {
@@ -99,15 +118,27 @@ impl Component for WasmComponent {
                 });
             }
 
+            // Define environment ports imports
+            for (name, any_port) in &self.env_ports {
+                let import_name = format!("read-{}", name);
+                let any_port = any_port.clone();
+                with_env_var_wrapper!(AnyEnvironmentPort, any_port, |port| {
+                    linker.root().func_wrap(&import_name, move |_store, ()| {
+                        Ok((port.value().into_wit(),))
+                    })?;
+                });
+            }
+
             // Instantiate the component
             let instance = linker.instantiate(&mut store, &component)?;
+            let nest_component = NestComponent::new(&mut store, &instance)?;
 
             // Register ports handlers
-            for (name, any_port) in &self.ports {
+            for (name, any_port) in &self.sys_ports {
                 let logger = &logger;
                 with_message_wrapper!(AnySystemPort, any_port, |port| {
                     let export_name = format!("{}-in", name);
-                    let port_in = instance.get_typed_func::<(_,), ()>(&mut store, &export_name).expect("Export not found");
+                    let port_in = instance.get_typed_func::<(_,), ()>(&mut store, &export_name)?;
 
                     dispatcher.register_system_port(port, Box::new(move |msg, state| {
                         if let Err(e) = port_in.call(&mut state.store, (msg.into_wit(),)) {
@@ -123,8 +154,15 @@ impl Component for WasmComponent {
             }
 
             // Starting
-            logger.info("WASM component starting")?;
-            dispatcher.start_dispatch(WasmComponentState { update_status: true, store })?;
+            logger.info("Initializing component...")?;
+            if let Err(error) = nest_component.call_init(&mut store, &self.config.options)? {
+                match error {
+                    InitError::UnknownOption(err_msg) => logger.error(format!("Unknown option: {}", err_msg))?,
+                    InitError::InvalidValue(err_msg) => logger.error(format!("Invalid value: {}", err_msg))?,
+                }
+            }
+            logger.info("Initialization complete")?;
+            dispatcher.start_dispatch(WasmComponentState { update_status: true, store, nest_component })?;
 
             Ok(())
         });
@@ -140,7 +178,12 @@ impl Component for WasmComponent {
 
         // Get system ports from params
         for (k, v) in &params.system_ports {
-            comp.ports.insert(k.clone(), v.clone());
+            comp.sys_ports.insert(k.clone(), v.clone());
+        }
+
+        // Get environment ports from params
+        for (k, v) in &params.env_ports {
+            comp.env_ports.insert(k.clone(), v.clone());
         }
 
         Ok(comp)

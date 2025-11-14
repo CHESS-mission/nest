@@ -5,12 +5,19 @@ use crossbeam_channel::{Receiver, Select, TryRecvError};
 
 use crate::{
     component::{
-        qemu::QemuComponent, wasm::WasmComponent, Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry
-    }, parser::specs::{ComponentTypeSpec, PortTypeSpec, TopologySpec}, ports::{AnySystemPortBuilder, SystemPortBuilder}
+        Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, qemu::QemuComponent,
+        wasm::WasmComponent,
+    },
+    parser::specs::{ComponentTypeSpec, EnvPortTypeSpec, PortTypeSpec, TopologySpec},
+    ports::{
+        AnyEnvironmentPort, AnyEnvironmentVar, AnySystemPortBuilder, EnvironmentVar,
+        SystemPortBuilder,
+    },
 };
 
 pub struct SimulationBuilder {
     components: HashMap<String, Box<dyn Component>>,
+    environment: HashMap<String, AnyEnvironmentVar>,
 }
 
 impl SimulationBuilder {
@@ -26,7 +33,6 @@ impl SimulationBuilder {
                     PortTypeSpec::Bool => AnySystemPortBuilder::Bool(SystemPortBuilder::default()),
                     PortTypeSpec::Bytes => AnySystemPortBuilder::Bytes(SystemPortBuilder::default()),
                     PortTypeSpec::Text => AnySystemPortBuilder::Text(SystemPortBuilder::default()),
-                    PortTypeSpec::Json => AnySystemPortBuilder::Json(SystemPortBuilder::default()),
                     PortTypeSpec::I2c => AnySystemPortBuilder::I2c(SystemPortBuilder::default()),
                 }))
                 .collect()
@@ -62,7 +68,22 @@ impl SimulationBuilder {
             }
         }
 
-        // TODO: create environment
+        // Create environment
+        let mut environment: HashMap<String, AnyEnvironmentVar> = HashMap::new();
+        for env_var in &topology.environment {
+            environment.insert(
+                env_var.name.clone(),
+                match env_var.var_type {
+                    EnvPortTypeSpec::Int => AnyEnvironmentVar::Int(EnvironmentVar::default()),
+                    EnvPortTypeSpec::Float => AnyEnvironmentVar::Float(EnvironmentVar::default()),
+                    EnvPortTypeSpec::Bool => AnyEnvironmentVar::Bool(EnvironmentVar::default()),
+                    EnvPortTypeSpec::Vec2 => AnyEnvironmentVar::Vec2(EnvironmentVar::default()),
+                    EnvPortTypeSpec::Vec3 => AnyEnvironmentVar::Vec3(EnvironmentVar::default()),
+                    EnvPortTypeSpec::Quaternion => AnyEnvironmentVar::Quaternion(EnvironmentVar::default()),
+                    EnvPortTypeSpec::Tensor => AnyEnvironmentVar::Tensor(EnvironmentVar::default()),
+                }
+            );
+        }
 
         // Create components
         let mut components: HashMap<String, Box<dyn Component>> = HashMap::new();
@@ -77,7 +98,14 @@ impl SimulationBuilder {
                 }
             }
 
-            // TODO: create environment ports
+            // Create environment ports
+            for env_port in &comp.environment_ports {
+                if let Some(env_var) = environment.get(&env_port.var_name) {
+                    params.add_env_port(env_port.name.clone(), AnyEnvironmentPort::from(env_var.clone()));
+                } else {
+                    bail!("No matching environment variable name for port {}.{}: {}", comp.name, env_port.name, env_port.var_name);
+                }
+            }
 
             match comp.component_type {
                 ComponentTypeSpec::Qemu => { components.insert(comp.name.clone(), Box::new(QemuComponent::from_params(&params)?)); },
@@ -86,7 +114,7 @@ impl SimulationBuilder {
         }
 
 
-        Ok(SimulationBuilder { components })
+        Ok(SimulationBuilder { components, environment })
     }
 
     pub fn start_simulation(self) -> Result<Simulation> {
@@ -186,34 +214,34 @@ impl<T> SimulationReceiver<T> {
     }
 
     // TODO: update to handle empty select panics
-    pub fn recv_drain(&mut self) -> Vec<(String, T)> {
-        let mut sel = Select::new();
-
-        for (_source, receiver) in &self.receivers {
-            sel.recv(receiver);
-        }
-
-        let mut msgs = Vec::new();
-
-        // Helper to handle a single receiver result
-        let mut handle_recv = |index: usize, sel: &mut Select| {
-            let (source, receiver) = &self.receivers[index];
-            match receiver.try_recv() {
-                Ok(msg) => msgs.push((source.into(), msg)),
-                Err(TryRecvError::Empty) => return false,
-                Err(TryRecvError::Disconnected) => sel.remove(index),
-            }
-            true
-        };
-
-        // Wait for at least one entry
-        while !handle_recv(sel.ready(), &mut sel) {};
-
-        // Drain the rest without blocking
-        while let Ok(index) = sel.try_ready() {
-            handle_recv(index, &mut sel);
-        }
-
-        msgs
-    }
+    // pub fn recv_drain(&mut self) -> Vec<(String, T)> {
+    //     let mut sel = Select::new();
+    //
+    //     for (_source, receiver) in &self.receivers {
+    //         sel.recv(receiver);
+    //     }
+    //
+    //     let mut msgs = Vec::new();
+    //
+    //     // Helper to handle a single receiver result
+    //     let mut handle_recv = |index: usize, sel: &mut Select| {
+    //         let (source, receiver) = &self.receivers[index];
+    //         match receiver.try_recv() {
+    //             Ok(msg) => msgs.push((source.into(), msg)),
+    //             Err(TryRecvError::Empty) => return false,
+    //             Err(TryRecvError::Disconnected) => sel.remove(index),
+    //         }
+    //         true
+    //     };
+    //
+    //     // Wait for at least one entry
+    //     while !handle_recv(sel.ready(), &mut sel) {};
+    //
+    //     // Drain the rest without blocking
+    //     while let Ok(index) = sel.try_ready() {
+    //         handle_recv(index, &mut sel);
+    //     }
+    //
+    //     msgs
+    // }
 }

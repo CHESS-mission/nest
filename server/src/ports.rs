@@ -4,8 +4,10 @@ use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use nalgebra::{UnitQuaternion, Vector2, Vector3};
+use ndarray::ArrayD;
 
-use crate::{any_message_enum};
+use crate::{any_env_var_enum, any_message_enum};
 
 /// [SystemPort] builder for creating message channels and setting up connections
 /// with other ports.
@@ -66,7 +68,6 @@ impl AnySystemPortBuilder {
             AnySystemPortBuilder::Bool(port) => port.connect_to(other.as_bool()?),
             AnySystemPortBuilder::Bytes(port) => port.connect_to(other.as_bytes()?),
             AnySystemPortBuilder::Text(port) => port.connect_to(other.as_text()?),
-            AnySystemPortBuilder::Json(port) => port.connect_to(other.as_json()?),
             AnySystemPortBuilder::I2c(port) => port.connect_to(other.as_i2c()?),
         }
         Ok(())
@@ -80,7 +81,6 @@ impl AnySystemPortBuilder {
             AnySystemPortBuilder::Bool(port) => AnySystemPort::Bool(port.build()),
             AnySystemPortBuilder::Bytes(port) => AnySystemPort::Bytes(port.build()),
             AnySystemPortBuilder::Text(port) => AnySystemPort::Text(port.build()),
-            AnySystemPortBuilder::Json(port) => AnySystemPort::Json(port.build()),
             AnySystemPortBuilder::I2c(port) => AnySystemPort::I2c(port.build()),
         }
     }
@@ -146,31 +146,31 @@ pub enum PortQueueCapacity {
 
 /// Simple read-only wrapper around an [EnvironmentVar].
 #[derive(Clone, Debug)]
-pub struct EnvironmentPort<M: Clone + Send + Sync + 'static> {
-    env_var: EnvironmentVar<M>,
+pub struct EnvironmentPort<V: Clone + Send + Sync + 'static> {
+    env_var: EnvironmentVar<V>,
 }
 
-impl<M: Clone + Send + Sync + 'static> EnvironmentPort<M> {
+impl<V: Clone + Send + Sync + 'static> EnvironmentPort<V> {
     /// Create a new [EnvironmentPort].
-    pub fn new(env_var: EnvironmentVar<M>) -> Self {
+    pub fn new(env_var: EnvironmentVar<V>) -> Self {
         Self { env_var }
     }
 
     /// Read the underlying value by **cloning** it.
     /// Holds a read lock only for the time it takes to clone the value.
-    pub fn value(&self) -> M {
+    pub fn value(&self) -> V {
         self.env_var.read().unwrap().clone()
     }
 
     /// Read the underlying value by **reference**.
     /// Holds a read lock for as long as the reference is not dropped.
     /// Returns a [`RwLockReadGuard`] so the caller can access it directly.
-    pub fn read(&self) -> RwLockReadGuard<'_, M> {
+    pub fn read(&self) -> RwLockReadGuard<'_, V> {
         self.env_var.read().unwrap()
     }
 }
 
-any_message_enum!(AnyEnvironmentPort, EnvironmentPort);
+any_env_var_enum!(AnyEnvironmentPort, EnvironmentPort);
 
 impl From<AnyEnvironmentVar> for AnyEnvironmentPort {
     fn from(value: AnyEnvironmentVar) -> Self {
@@ -178,17 +178,17 @@ impl From<AnyEnvironmentVar> for AnyEnvironmentPort {
             AnyEnvironmentVar::Int(env_var) => AnyEnvironmentPort::Int(EnvironmentPort::new(env_var)),
             AnyEnvironmentVar::Float(env_var) => AnyEnvironmentPort::Float(EnvironmentPort::new(env_var)),
             AnyEnvironmentVar::Bool(env_var) => AnyEnvironmentPort::Bool(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Bytes(env_var) => AnyEnvironmentPort::Bytes(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Text(env_var) => AnyEnvironmentPort::Text(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::Json(env_var) => AnyEnvironmentPort::Json(EnvironmentPort::new(env_var)),
-            AnyEnvironmentVar::I2c(env_var) => AnyEnvironmentPort::I2c(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Vec2(env_var) => AnyEnvironmentPort::Vec2(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Vec3(env_var) => AnyEnvironmentPort::Vec3(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Quaternion(env_var) => AnyEnvironmentPort::Quaternion(EnvironmentPort::new(env_var)),
+            AnyEnvironmentVar::Tensor(env_var) => AnyEnvironmentPort::Tensor(EnvironmentPort::new(env_var)),
         }
     }
 }
 
-pub type EnvironmentVar<M> = Arc<RwLock<M>>;
+pub type EnvironmentVar<V> = Arc<RwLock<V>>;
 
-any_message_enum!(AnyEnvironmentVar, EnvironmentVar);
+any_env_var_enum!(AnyEnvironmentVar, EnvironmentVar);
 
 // Message
 
@@ -201,14 +201,13 @@ any_message_enum!(AnyEnvironmentVar, EnvironmentVar);
 /// - [BoolMessage]
 /// - [BytesMessage]
 /// - [TextMessage]
-/// - [JsonMessage]
+/// - [I2cMessage]
 
 pub type IntMessage = i32;
 pub type FloatMessage = f32;
 pub type BoolMessage = bool;
 pub type BytesMessage = Vec<u8>;
 pub type TextMessage = String;
-pub type JsonMessage = serde_json::Value;
 pub type I2cMessage = I2cTransaction;
 
 /// Represents an I2C transaction (request or response).
@@ -265,3 +264,22 @@ pub enum I2cResponseOp {
     /// A read operation response, with the data that was read.
     Read(Vec<u8>),
 }
+
+/// Environment variable types.
+/// Available environment variable types are:
+///
+/// - [IntVar]
+/// - [FloatVar]
+/// - [BoolVar]
+/// - [Vec2Var]
+/// - [Vec3Var]
+/// - [QuaternionVar]
+/// - [TensorVar]
+
+pub type IntVar = i32;
+pub type FloatVar = f32;
+pub type BoolVar = bool;
+pub type Vec2Var = Vector2<f32>;
+pub type Vec3Var = Vector3<f32>;
+pub type QuaternionVar = UnitQuaternion<f32>;
+pub type TensorVar = ArrayD<f32>;

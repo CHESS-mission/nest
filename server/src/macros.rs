@@ -101,14 +101,54 @@ macro_rules! with_message_wrapper {
                 type M = $crate::ports::TextMessage;
                 $body
             }
-            $any_type::Json($wrapper) => {
-                #[allow(dead_code)]
-                type M = $crate::ports::JsonMessage;
-                $body
-            }
             $any_type::I2c($wrapper) => {
                 #[allow(dead_code)]
                 type M = $crate::ports::I2cMessage;
+                $body
+            }
+        }
+    };
+}
+
+/// Helper macro for transparently operating on the environment variable wrapper inside a type
+/// erased struct.
+#[macro_export]
+macro_rules! with_env_var_wrapper {
+    ($any_type:ident, $any_enum:expr, |$wrapper:ident| $body:block) => {
+        match $any_enum {
+            $any_type::Int($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::IntVar;
+                $body
+            }
+            $any_type::Float($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::FloatVar;
+                $body
+            }
+            $any_type::Bool($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::BoolVar;
+                $body
+            }
+            $any_type::Vec2($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::Vec2Var;
+                $body
+            }
+            $any_type::Vec3($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::Vec2Var;
+                $body
+            }
+            $any_type::Quaternion($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::QuaternionVar;
+                $body
+            }
+            $any_type::Tensor($wrapper) => {
+                #[allow(dead_code)]
+                type M = $crate::ports::TensorVar;
                 $body
             }
         }
@@ -174,7 +214,6 @@ macro_rules! any_message_enum {
             Bool($wrapper<BoolMessage>),
             Bytes($wrapper<BytesMessage>),
             Text($wrapper<TextMessage>),
-            Json($wrapper<JsonMessage>),
             I2c($wrapper<I2cMessage>),
         }
 
@@ -184,8 +223,37 @@ macro_rules! any_message_enum {
             $crate::impl_as_into_methods!($enum_name, $wrapper, Bool, BoolMessage, as_bool, as_bool_mut, into_bool);
             $crate::impl_as_into_methods!($enum_name, $wrapper, Bytes, BytesMessage, as_bytes, as_bytes_mut, into_bytes);
             $crate::impl_as_into_methods!($enum_name, $wrapper, Text, TextMessage, as_text, as_text_mut, into_text);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Json, JsonMessage, as_json, as_json_mut, into_json);
             $crate::impl_as_into_methods!($enum_name, $wrapper, I2c, I2cMessage, as_i2c, as_i2c_mut, into_i2c);
+        }
+    };
+}
+
+/// Create a type erased enum for structs generic on environment variable types.
+#[macro_export]
+macro_rules! any_env_var_enum {
+    ($enum_name:ident, $wrapper:ident) => {
+        #[doc = concat!("A generic wrapper around [", stringify!($wrapper), "] to erase the underlying environment variable type.\n\n",
+                        "Useful when working with heterogeneous [", stringify!($wrapper), "] collections, ",
+                        "but not efficient since it requires looking up the underlying type for most operations.")]
+        #[derive(Clone, Debug)]
+        pub enum $enum_name {
+            Int($wrapper<IntVar>),
+            Float($wrapper<FloatVar>),
+            Bool($wrapper<BoolVar>),
+            Vec2($wrapper<Vec2Var>),
+            Vec3($wrapper<Vec3Var>),
+            Quaternion($wrapper<QuaternionVar>),
+            Tensor($wrapper<TensorVar>),
+        }
+
+        impl $enum_name {
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Int, IntVar, as_int, as_int_mut, into_int);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Float, FloatVar, as_float, as_float_mut, into_float);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Bool, BoolVar, as_bool, as_bool_mut, into_bool);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Vec2, Vec2Var, as_vec2, as_vec2_mut, into_vec2);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Vec3, Vec3Var, as_vec3, as_vec3_mut, into_vec3);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Quaternion, QuaternionVar, as_quaternion, as_quaternion_mut, into_quaternion);
+            $crate::impl_as_into_methods!($enum_name, $wrapper, Tensor, TensorVar, as_tensor, as_tensor_mut, into_tensor);
         }
     };
 }

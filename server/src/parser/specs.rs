@@ -1,6 +1,5 @@
 use api::{
-    ComponentDTO, ComponentTypeDTO, EnvironmentVarDTO, PortTypeDTO, SystemPortDTO, TopologyDTO,
-    WireDTO, WireEndpointDTO,
+    ComponentDTO, ComponentTypeDTO, EnvPortTypeDTO, EnvironmentVarDTO, PortTypeDTO, SystemPortDTO, TopologyDTO, WireDTO, WireEndpointDTO
 };
 
 #[derive(Clone, Debug)]
@@ -37,15 +36,12 @@ impl Into<TopologyDTO> for TopologySpec {
 #[derive(Clone, Debug)]
 pub struct EnvironmentVarSpec {
     pub name: String,
-    pub port_type: PortTypeSpec,
+    pub var_type: EnvPortTypeSpec,
 }
 
 impl EnvironmentVarSpec {
-    pub fn new<S: Into<String>>(name: S, port_type: PortTypeSpec) -> Self {
-        Self {
-            name: name.into(),
-            port_type,
-        }
+    pub fn new<S: Into<String>>(name: S, var_type: EnvPortTypeSpec) -> Self {
+        Self { name: name.into(), var_type }
     }
 }
 
@@ -53,7 +49,7 @@ impl Into<EnvironmentVarDTO> for EnvironmentVarSpec {
     fn into(self) -> EnvironmentVarDTO {
         EnvironmentVarDTO {
             variable: self.name,
-            port_type: self.port_type.into(),
+            var_type: self.var_type.into(),
         }
     }
 }
@@ -142,15 +138,13 @@ impl Into<SystemPortDTO> for SystemPortSpec {
 #[derive(Clone, Debug)]
 pub struct EnvironmentPortSpec {
     pub name: String,
-    pub port_type: PortTypeSpec,
+    pub var_name: String,
+    pub port_type: EnvPortTypeSpec,
 }
 
 impl EnvironmentPortSpec {
-    pub fn new<S: Into<String>>(name: S, port_type: PortTypeSpec) -> Self {
-        Self {
-            name: name.into(),
-            port_type,
-        }
+    pub fn new<N: Into<String>, V: Into<String>>(name: N, var_name: V, port_type: EnvPortTypeSpec) -> Self {
+        Self { name: name.into(), var_name: var_name.into(), port_type }
     }
 }
 
@@ -161,7 +155,6 @@ pub enum PortTypeSpec {
     Bool,
     Bytes,
     Text,
-    Json,
     I2c,
 }
 
@@ -173,8 +166,32 @@ impl Into<PortTypeDTO> for PortTypeSpec {
             PortTypeSpec::Bool => PortTypeDTO::Bool,
             PortTypeSpec::Bytes => PortTypeDTO::Bytes,
             PortTypeSpec::Text => PortTypeDTO::Text,
-            PortTypeSpec::Json => PortTypeDTO::Json,
             PortTypeSpec::I2c => PortTypeDTO::I2c,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum EnvPortTypeSpec {
+    Int,
+    Float,
+    Bool,
+    Vec2,
+    Vec3,
+    Quaternion,
+    Tensor,
+}
+
+impl Into<EnvPortTypeDTO> for EnvPortTypeSpec {
+    fn into(self) -> EnvPortTypeDTO {
+        match self {
+            EnvPortTypeSpec::Int => EnvPortTypeDTO::Int,
+            EnvPortTypeSpec::Float => EnvPortTypeDTO::Float,
+            EnvPortTypeSpec::Bool => EnvPortTypeDTO::Bool,
+            EnvPortTypeSpec::Vec2 => EnvPortTypeDTO::Vec2,
+            EnvPortTypeSpec::Vec3 => EnvPortTypeDTO::Vec3,
+            EnvPortTypeSpec::Quaternion => EnvPortTypeDTO::Quaternion,
+            EnvPortTypeSpec::Tensor => EnvPortTypeDTO::Tensor,
         }
     }
 }

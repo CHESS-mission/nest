@@ -13,7 +13,7 @@ use crate::{
             gpio::{messaging::GpioEvent, start_gpio_backend, GpioLine}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}
         }, Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, MessageDispatcher
     },
-    ports::{BoolMessage, I2cMessage, JsonMessage, SystemPort},
+    ports::{BoolMessage, I2cMessage, SystemPort},
 };
 
 #[derive(Serialize, Deserialize)]

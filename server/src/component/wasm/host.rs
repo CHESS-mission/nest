@@ -1,15 +1,16 @@
 use crossbeam_channel::Sender;
+use ndarray::IxDyn;
 use wasmtime::component::*;
 
 use crate::{
     component::{
         ComponentEvent, Logger,
         wasm::host::nest::plugin::types::{
-            Bytes, I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction, Json,
+            Bytes, I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction, Quaternion, Tensor, Vec2, Vec3
         },
     },
     ports::{
-        BoolMessage, BytesMessage, FloatMessage, I2cMessage, IntMessage, JsonMessage, TextMessage,
+        BoolMessage, BytesMessage, FloatMessage, I2cMessage, IntMessage, QuaternionVar, TensorVar, TextMessage, Vec2Var, Vec3Var
     },
 };
 
@@ -26,6 +27,9 @@ impl HostCtx {
     }
 }
 
+impl nest::plugin::types::Host for HostCtx {}
+impl nest::plugin::errors::Host for HostCtx {}
+
 impl nest::plugin::log::Host for HostCtx {
     fn info(&mut self, msg: String) -> () {
         let _ = self.logger.info(msg);
@@ -37,6 +41,16 @@ impl nest::plugin::log::Host for HostCtx {
 
     fn error(&mut self, msg: String) -> () {
         let _ = self.logger.error(msg);
+    }
+}
+
+impl NestComponentImports for HostCtx {
+    fn emit(&mut self, event: String, value: String) -> () {
+        if let Ok(value) = serde_json::from_str(&value) {
+            let _ = self.sender.send(ComponentEvent::SimulationEvent { event, value });
+        } else {
+            let _ = self.sender.send(ComponentEvent::Error(format!("Received invalid JSON for event {}: {}", event, value)));
+        }
     }
 }
 
@@ -64,10 +78,6 @@ impl IntoWit<String> for TextMessage {
     fn into_wit(self) -> String { self }
 }
 
-impl IntoWit<Json> for JsonMessage {
-    fn into_wit(self) -> Json { self.to_string() }
-}
-
 impl IntoWit<I2cTransaction> for I2cMessage {
     fn into_wit(self) -> I2cTransaction {
         match self {
@@ -88,6 +98,45 @@ impl IntoWit<I2cTransaction> for I2cMessage {
                     },
                 })
             }
+        }
+    }
+}
+
+impl IntoWit<Vec2> for Vec2Var {
+    fn into_wit(self) -> Vec2 {
+        Vec2 {
+            x: self.x,
+            y: self.y,
+        }
+    }
+}
+
+impl IntoWit<Vec3> for Vec3Var {
+    fn into_wit(self) -> Vec3 {
+        Vec3 {
+            x: self.x,
+            y: self.y,
+            z: self.z,
+        }
+    }
+}
+
+impl IntoWit<Quaternion> for QuaternionVar {
+    fn into_wit(self) -> Quaternion {
+        Quaternion {
+            a: self.w,
+            b: self.i,
+            c: self.j,
+            d: self.k,
+        }
+    }
+}
+
+impl IntoWit<Tensor> for TensorVar {
+    fn into_wit(self) -> Tensor {
+        Tensor {
+            shape: self.shape().into_iter().map(|x| *x as u32).collect(),
+            data: self.as_slice().unwrap().to_vec(),
         }
     }
 }
@@ -116,10 +165,6 @@ impl FromWit<String> for TextMessage {
     fn from_wit(wit_val: String) -> Self { wit_val }
 }
 
-impl FromWit<Json> for JsonMessage {
-    fn from_wit(wit_val: Json) -> Self { serde_json::from_str(&wit_val).unwrap() } // Maybe remove JSON completely...
-}
-
 impl FromWit<I2cTransaction> for I2cMessage {
     fn from_wit(wit_val: I2cTransaction) -> Self {
         match wit_val {
@@ -143,3 +188,30 @@ impl FromWit<I2cTransaction> for I2cMessage {
         }
     }
 }
+
+impl FromWit<Vec2> for Vec2Var {
+    fn from_wit(v: Vec2) -> Self {
+        Vec2Var::new(v.x, v.y)
+    }
+}
+
+impl FromWit<Vec3> for Vec3Var {
+    fn from_wit(v: Vec3) -> Self {
+        Vec3Var::new(v.x, v.y, v.z)
+    }
+}
+
+impl FromWit<Quaternion> for QuaternionVar {
+    fn from_wit(q: Quaternion) -> Self {
+        QuaternionVar::from_quaternion(nalgebra::Quaternion::new(q.a, q.b, q.c, q.d))
+    }
+}
+
+impl FromWit<Tensor> for TensorVar {
+    fn from_wit(t: Tensor) -> Self {
+        let shape: Vec<usize> = t.shape.into_iter().map(|x| x as usize).collect();
+        TensorVar::from_shape_vec(IxDyn(&shape), t.data)
+            .expect("invalid shape/data length in Tensor")
+    }
+}
+

@@ -9,4 +9,19 @@ interface log {
 world nest-component {
   import log;
   import types;
+  import errors;
+
+  use errors.{init-error, command-error};
+
+  export init: func(options: list<tuple<string, string>>) -> result<_, init-error>;
+  export on-command: func(command: string, args: string) -> result<_, command-error>;
+  import emit: func(event: string, value: string);
+}
+
+// Timeout extension
+world timeout-ext {
+  type timer-id = u32;
+
+  export on-timeout: func(timer-id: timer-id);
+  import set-timer: func(duration-ms: u32) -> timer-id;
 }

@@ -122,7 +122,7 @@ pub struct TopologyDTO {
 pub struct EnvironmentVarDTO {
     pub variable: String,
     #[serde(rename = "type")]
-    pub port_type: PortTypeDTO,
+    pub var_type: EnvPortTypeDTO,
 }
 
 #[derive(Clone, Debug)]
@@ -159,8 +159,20 @@ pub enum PortTypeDTO {
     Bool,
     Bytes,
     Text,
-    Json,
     I2c,
+}
+
+#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvPortTypeDTO {
+    Int,
+    Float,
+    Bool,
+    Vec2,
+    Vec3,
+    Quaternion,
+    Tensor,
 }
 
 #[derive(Clone, Debug)]

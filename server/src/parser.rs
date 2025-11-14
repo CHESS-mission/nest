@@ -68,12 +68,12 @@ fn parse_environment_variable(env_var: &Yaml) -> Result<EnvironmentVarSpec, Pars
         .as_str()
         .ok_or(ParserError::MissingField("environment_variable.name"))?;
 
-    let port_type = env_var["type"]
+    let var_type = env_var["type"]
         .as_str()
-        .ok_or(ParserError::MissingField("environment_variable.port_type"))?
-        .parse::<PortTypeSpec>()?;
+        .ok_or(ParserError::MissingField("environment_variable.type"))?
+        .parse::<EnvPortTypeSpec>()?;
 
-    Ok(EnvironmentVarSpec::new(name, port_type))
+    Ok(EnvironmentVarSpec::new(name, var_type))
 }
 
 // components
@@ -136,11 +136,16 @@ fn parse_environment_port(env_port: &Yaml) -> Result<EnvironmentPortSpec, Parser
         ));
     }
 
+    let var_name = env_port["variable"]
+        .as_str()
+        .ok_or(ParserError::MissingField("ports.environment.variable"))?;
+
     let port_type = env_port["type"]
         .as_str()
         .ok_or(ParserError::MissingField("ports.environment.type"))?
-        .parse::<PortTypeSpec>()?;
-    Ok(EnvironmentPortSpec::new(port_name, port_type))
+        .parse::<EnvPortTypeSpec>()?;
+
+    Ok(EnvironmentPortSpec::new(port_name, var_name, port_type))
 }
 
 // sys port
@@ -223,8 +228,24 @@ impl FromStr for PortTypeSpec {
             "bool" => PortTypeSpec::Bool,
             "bytes" => PortTypeSpec::Bytes,
             "text" => PortTypeSpec::Text,
-            "json" => PortTypeSpec::Json,
+            "i2c" => PortTypeSpec::I2c,
             _ => return Err(ParserError::InvalidType("Unknown port type")),
+        })
+    }
+}
+
+impl FromStr for EnvPortTypeSpec {
+    type Err = ParserError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().trim() {
+            "int" => EnvPortTypeSpec::Int,
+            "float" => EnvPortTypeSpec::Float,
+            "bool" => EnvPortTypeSpec::Bool,
+            "vec2" => EnvPortTypeSpec::Vec2,
+            "vec3" => EnvPortTypeSpec::Vec3,
+            "quaternion" => EnvPortTypeSpec::Quaternion,
+            "tensor" => EnvPortTypeSpec::Tensor,
+            _ => return Err(ParserError::InvalidType("Unknown environment variable type")),
         })
     }
 }
@@ -239,5 +260,4 @@ impl FromStr for ComponentTypeSpec {
         })
     }
 }
-
 

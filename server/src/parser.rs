@@ -121,11 +121,8 @@ fn parse_component(comp: &Yaml) -> Result<ComponentSpec, ParserError> {
     ))
 }
 
-// these two can be genericised, but i cant figure out how to get the errors to work
-// maybe some sort of ComponentContext in /parser/error.rs but it doesnt seem useful
-// as there isnt much chance for there to be more components added anytime soon.
-// attempting to do something of the same sort as the porttype structs run into the same issue
-// maybe ill come back another day and find a better solution for this, but so far it works
+// Although these two might seem similar, we will keep them seperate for the time being 
+// as they do very different things.
 
 // env port
 fn parse_environment_port(env_port: &Yaml) -> Result<EnvironmentPortSpec, ParserError> {

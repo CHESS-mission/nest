@@ -1,6 +1,6 @@
 use time::OffsetDateTime;
 
-use api::{LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO};
+use nest_api::{LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO, LogLevelDTO};
 use leptos::{html::Div, logging, prelude::*, server::codee::string::FromToStringCodec};
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
@@ -344,17 +344,17 @@ fn SidePanel(
                                 </span>
                                 "] ["
                                 <span
-                                    class:text-blue-500=move || log.level == api::LogLevelDTO::Info
-                                    class:text-yellow-500=move || log.level == api::LogLevelDTO::Warning
-                                    class:text-red-500=move || log.level == api::LogLevelDTO::Error
+                                    class:text-blue-500=move || log.level == LogLevelDTO::Info
+                                    class:text-yellow-500=move || log.level == LogLevelDTO::Warning
+                                    class:text-red-500=move || log.level == LogLevelDTO::Error
                                 >
                                     {format!("{:?}", log.level)}
                                 </span>
                                 "] "
                                 <span
-                                    class:text-gray-50=move || log.level == api::LogLevelDTO::Info
-                                    class:text-yellow-500=move || log.level == api::LogLevelDTO::Warning
-                                    class:text-red-500=move || log.level == api::LogLevelDTO::Error
+                                    class:text-gray-50=move || log.level == LogLevelDTO::Info
+                                    class:text-yellow-500=move || log.level == LogLevelDTO::Warning
+                                    class:text-red-500=move || log.level == LogLevelDTO::Error
                                 >
                                     {log.message}
                                 </span>

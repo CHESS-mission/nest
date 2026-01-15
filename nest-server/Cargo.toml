@@ -1,11 +1,11 @@
 [package]
-name = "server"
+name = "nest-server"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-api = { path = "../api" }
-app = { path = "../app", default-features = false, features = ["ssr"] }
+nest-api = { path = "../nest-api" }
+nest-webapp = { path = "../nest-webapp", default-features = false, features = ["ssr"] }
 leptos = { workspace = true, features = [ "ssr" ]}
 leptos_axum.workspace = true
 serde.workspace = true
@@ -29,3 +29,6 @@ futures-util = "0.3.31"
 yaml-rust2 = "0.10.4"
 nalgebra = "0.34.1"
 ndarray = "0.17.1"
+tokio-util = "0.7.18"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

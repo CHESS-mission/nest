@@ -95,6 +95,7 @@ pub struct LogUpdate {
 #[derive(Clone, Debug)]
 #[derive(Serialize, Deserialize)]
 pub struct ErrorUpdate {
+    pub component: String,
     pub message: String,
 }
 

@@ -5,7 +5,7 @@ pub mod test;
 use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}};
 
 use anyhow::{anyhow, Result};
-use api::LogLevelDTO;
+use nest_api::LogLevelDTO;
 use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
 use serde_json::Value;
 use time::OffsetDateTime;

@@ -30,6 +30,7 @@ mod host;
 pub struct WasmComponentConfig {
     /// Path or URL to the WASM module
     pub module: String,
+    #[serde(default)]
     pub options: Vec<(String, String)>,
 }
 

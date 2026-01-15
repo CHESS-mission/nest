@@ -1,9 +1,18 @@
-use leptos::config::get_configuration;
-use server::{parser::specs::TopologySpec, server::NestServer, simulator::Simulator};
+use tracing_subscriber::EnvFilter;
+use nest_server::{
+    parser::specs::TopologySpec, server::NestServer, simulator::Simulator
+};
 
 #[tokio::main]
 async fn main() {
-    let conf = get_configuration(None).unwrap();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info"))
+        )
+        .init();
+
+    let conf = leptos::config::get_configuration(None).unwrap();
     let addr = conf.leptos_options.site_addr;
 
     let mut simulator = Simulator::new();

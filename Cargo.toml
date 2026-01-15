@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["app", "frontend", "server", "api"]
+members = ["nest-webapp", "nest-hydrate", "nest-server", "nest-api"]
 
 # need to be applied only to wasm build
 [profile.release]
@@ -27,10 +27,10 @@ time = { version="0.3.44", features=["formatting", "parsing", "serde"] }
 name = "nest"
 
 # the package in the workspace that contains the server binary (binary crate)
-bin-package = "server"
+bin-package = "nest-server"
 
 # the package in the workspace that contains the frontend wasm binary (library crate)
-lib-package = "frontend"
+lib-package = "nest-hydrate"
 
 # The site root folder is where cargo-leptos generate all output. WARNING: all content of this folder will be erased on a rebuild. Use it in your server setup.
 site-root = "target/site"

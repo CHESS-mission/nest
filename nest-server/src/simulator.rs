@@ -28,13 +28,7 @@ pub enum SimulatorError {
     ComponentNotFound(String),
 }
 
-pub enum SimulatorState {
-    Idle,
-    Ready,
-    Running,
-}
-
-enum InternalSimulatorState {
+enum SimulatorState {
     Idle,
     Ready {
         builder: SimulationBuilder,
@@ -42,65 +36,72 @@ enum InternalSimulatorState {
     },
     Running {
         simulation: Simulation,
-        started_at: OffsetDateTime,
         topology: TopologySpec,
+        started_at: OffsetDateTime,
     },
 }
 
-impl InternalSimulatorState {
-    fn to_external(&self) -> SimulatorState {
+impl SimulatorState {
+    fn to_status_update(&self) -> nest_api::StatusUpdate {
         match self {
-            InternalSimulatorState::Idle {..} => SimulatorState::Idle,
-            InternalSimulatorState::Ready {..} => SimulatorState::Ready,
-            InternalSimulatorState::Running {..} => SimulatorState::Running,
+            SimulatorState::Idle => nest_api::StatusUpdate::Idle,
+            SimulatorState::Ready { topology, .. } => nest_api::StatusUpdate::Ready(
+                nest_api::ReadyStatusUpdate { topology: topology.clone().into() }
+            ),
+            SimulatorState::Running { topology, started_at, .. } => nest_api::StatusUpdate::Running(
+                nest_api::RunningStatusUpdate {
+                    topology: topology.clone().into(),
+                    started_at: *started_at
+                }
+            ),
         }
     }
 }
 
 pub struct Simulator {
-    state: InternalSimulatorState,
+    state: SimulatorState,
 }
 
 impl Simulator {
     /// Create a new Simulator in the Idle state.
     pub fn new() -> Self {
-        Self { state: InternalSimulatorState::Idle }
+        Self { state: SimulatorState::Idle }
     }
 
     /// Load a topology (Idle -> Ready).
     pub fn load_topology(&mut self, topology: TopologySpec) -> Result<(), SimulatorError> {
-        if !matches!(self.state, InternalSimulatorState::Idle) {
+        if !matches!(self.state, SimulatorState::Idle) {
             return Err(SimulatorError::AlreadyReady);
         }
         let builder = SimulationBuilder::from_topology(&topology)
             .map_err(SimulatorError::LoadTopologyFailed)?;
-        self.state = InternalSimulatorState::Ready { builder, topology };
+        self.state = SimulatorState::Ready { builder, topology };
         Ok(())
     }
 
     /// Start the simulation (Ready -> Running).
     pub fn start(&mut self) -> Result<(), SimulatorError> {
-        match mem::replace(&mut self.state, InternalSimulatorState::Idle) {
-            InternalSimulatorState::Ready { builder, topology } => {
+        match mem::replace(&mut self.state, SimulatorState::Idle) {
+            SimulatorState::Ready { builder, topology } => {
                 let started_at = OffsetDateTime::now_utc();
                 let simulation = builder
                     .start_simulation()
                     .map_err(SimulatorError::StartSimulationFailed)?;
-                self.state = InternalSimulatorState::Running { simulation, started_at, topology };
+                self.state = SimulatorState::Running { simulation, started_at, topology };
                 Ok(())
             }
-            InternalSimulatorState::Running { simulation, started_at, topology } => {
-                self.state = InternalSimulatorState::Running { simulation, started_at, topology }; // Restore state
+            SimulatorState::Running { simulation, started_at, topology } => {
+                self.state = SimulatorState::Running { simulation, started_at, topology }; // Restore state
                 Err(SimulatorError::AlreadyRunning)
             }
-            InternalSimulatorState::Idle => Err(SimulatorError::NotReady),
+            SimulatorState::Idle => Err(SimulatorError::NotReady),
         }
     }
 
     /// Stop the simulation (Running -> Ready).
     pub fn stop(&mut self) -> Result<(), SimulatorError> {
-        match mem::replace(&mut self.state, InternalSimulatorState::Idle) {
-            InternalSimulatorState::Running { simulation, started_at: _, topology } => {
+        match mem::replace(&mut self.state, SimulatorState::Idle) {
+            SimulatorState::Running { simulation, started_at: _, topology } => {
                 simulation.stop().map_err(SimulatorError::StopSimulationFailed)?;
                 self.load_topology(topology)?;
                 Ok(())
@@ -118,7 +119,7 @@ impl Simulator {
     /// Note that multiple simulation log receivers will compete instead of each receiving all logs.
     pub fn log_receiver(&self) -> Result<SimulationReceiver<LogEntry>, SimulatorError> {
         match &self.state {
-            InternalSimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.log_receiver()),
+            SimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.log_receiver()),
             _ => {
                 Err(SimulatorError::NotRunning)
             }
@@ -131,7 +132,7 @@ impl Simulator {
     /// Note that multiple simulation events receivers will compete instead of each receiving all logs.
     pub fn event_receiver(&self) -> Result<SimulationReceiver<ComponentEvent>, SimulatorError> {
         match &self.state {
-            InternalSimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.event_receiver()),
+            SimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.event_receiver()),
             _ => Err(SimulatorError::NotRunning),
         }
     }
@@ -140,7 +141,7 @@ impl Simulator {
     /// if the simulation is not running.
     pub fn component_handle(&self, name: &str) -> Result<&ComponentHandle, SimulatorError> {
         match &self.state {
-            InternalSimulatorState::Running { simulation, started_at: _, topology: _ } => {
+            SimulatorState::Running { simulation, started_at: _, topology: _ } => {
                 simulation.handle(name)
                     .ok_or_else(|| SimulatorError::ComponentNotFound(name.into()))
             }
@@ -148,26 +149,26 @@ impl Simulator {
         }
     }
 
-    /// Return the current state.
-    pub fn state(&self) -> SimulatorState {
-        self.state.to_external()
+    /// Return the current status of the simulator.
+    pub fn status(&self) -> nest_api::StatusUpdate {
+        self.state.to_status_update()
     }
 
-    /// Return a reference to the currently loaded [Topology]. Fails if the simulation is not ready
-    /// or running.
-    pub fn topology(&self) -> Result<&TopologySpec, SimulatorError> {
-        match &self.state {
-            InternalSimulatorState::Ready { builder: _, topology } => Ok(topology),
-            InternalSimulatorState::Running { simulation: _, started_at: _, topology } => Ok(topology),
-            _ => Err(SimulatorError::NoTopologyLoaded),
-        }
-    }
-
-    /// Return the instant the simulation was started. Fails if the simulation is not running.
-    pub fn started_time(&self) -> Result<OffsetDateTime, SimulatorError> {
-        match self.state {
-            InternalSimulatorState::Running { simulation: _, started_at: started_time, topology: _ } => Ok(started_time),
-            _ => Err(SimulatorError::NotRunning),
-        }
-    }
+    // /// Return a reference to the currently loaded [Topology]. Fails if the simulation is not ready
+    // /// or running.
+    // pub fn topology(&self) -> Result<&TopologySpec, SimulatorError> {
+    //     match &self.state {
+    //         SimulatorState::Ready { builder: _, topology } => Ok(topology),
+    //         SimulatorState::Running { simulation: _, started_at: _, topology } => Ok(topology),
+    //         _ => Err(SimulatorError::NoTopologyLoaded),
+    //     }
+    // }
+    //
+    // /// Return the instant the simulation was started. Fails if the simulation is not running.
+    // pub fn started_time(&self) -> Result<OffsetDateTime, SimulatorError> {
+    //     match self.state {
+    //         SimulatorState::Running { simulation: _, started_at: started_time, topology: _ } => Ok(started_time),
+    //         _ => Err(SimulatorError::NotRunning),
+    //     }
+    // }
 }

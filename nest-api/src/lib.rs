@@ -1,5 +1,3 @@
-use time::OffsetDateTime;
-
 use serde::{Deserialize, Serialize};
 
 // Actions (client -> server)
@@ -70,8 +68,6 @@ pub struct ReadyStatusUpdate {
 #[derive(Serialize, Deserialize)]
 pub struct RunningStatusUpdate {
     pub topology: TopologyDTO,
-    #[serde(with = "time::serde::rfc3339")]
-    pub started_at: OffsetDateTime,
 }
 
 #[derive(Clone, Debug)]
@@ -85,8 +81,7 @@ pub struct EventUpdate {
 #[derive(Clone, Debug)]
 #[derive(Serialize, Deserialize)]
 pub struct LogUpdate {
-    #[serde(with = "time::serde::rfc3339")]
-    pub timestamp: OffsetDateTime,
+    pub timestamp: f64,
     pub level: LogLevelDTO,
     pub component: String,
     pub message: String,

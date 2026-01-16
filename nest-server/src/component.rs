@@ -2,13 +2,12 @@ pub mod wasm;
 pub mod qemu;
 pub mod test;
 
-use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}};
+use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Instant};
 
 use anyhow::{anyhow, Result};
 use nest_api::LogLevelDTO;
 use crossbeam_channel::{unbounded, Receiver, Select, Sender, TryRecvError};
 use serde_json::Value;
-use time::OffsetDateTime;
 
 use crate::ports::{AnyEnvironmentPort, AnySystemPort, SystemPort};
 
@@ -221,7 +220,7 @@ pub struct LogEntry {
     /// The log severity level.
     pub level: LogLevelDTO,
     /// The log timestamp.
-    pub timestamp: OffsetDateTime,
+    pub timestamp: Instant,
     /// The log message.
     pub message: String,
 }
@@ -229,7 +228,7 @@ pub struct LogEntry {
 impl LogEntry {
     /// Create a new log entry.
     pub fn new<S: Into<String>>(level: LogLevelDTO, message: S) -> Self {
-        Self { level, timestamp: OffsetDateTime::now_utc(), message: message.into() }
+        Self { level, timestamp: Instant::now(), message: message.into() }
     }
 }
 

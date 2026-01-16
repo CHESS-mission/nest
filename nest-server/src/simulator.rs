@@ -1,7 +1,6 @@
-use std::mem;
+use std::{mem, time::Instant};
 
 use thiserror::Error;
-use time::OffsetDateTime;
 
 use crate::{component::{ComponentEvent, ComponentHandle, LogEntry}, parser::specs::TopologySpec, simulation::{Simulation, SimulationBuilder, SimulationReceiver}};
 
@@ -37,7 +36,6 @@ enum SimulatorState {
     Running {
         simulation: Simulation,
         topology: TopologySpec,
-        started_at: OffsetDateTime,
     },
 }
 
@@ -48,11 +46,8 @@ impl SimulatorState {
             SimulatorState::Ready { topology, .. } => nest_api::StatusUpdate::Ready(
                 nest_api::ReadyStatusUpdate { topology: topology.clone().into() }
             ),
-            SimulatorState::Running { topology, started_at, .. } => nest_api::StatusUpdate::Running(
-                nest_api::RunningStatusUpdate {
-                    topology: topology.clone().into(),
-                    started_at: *started_at
-                }
+            SimulatorState::Running { topology, .. } => nest_api::StatusUpdate::Running(
+                nest_api::RunningStatusUpdate { topology: topology.clone().into() }
             ),
         }
     }
@@ -83,15 +78,14 @@ impl Simulator {
     pub fn start(&mut self) -> Result<(), SimulatorError> {
         match mem::replace(&mut self.state, SimulatorState::Idle) {
             SimulatorState::Ready { builder, topology } => {
-                let started_at = OffsetDateTime::now_utc();
                 let simulation = builder
                     .start_simulation()
                     .map_err(SimulatorError::StartSimulationFailed)?;
-                self.state = SimulatorState::Running { simulation, started_at, topology };
+                self.state = SimulatorState::Running { simulation, topology };
                 Ok(())
             }
-            SimulatorState::Running { simulation, started_at, topology } => {
-                self.state = SimulatorState::Running { simulation, started_at, topology }; // Restore state
+            SimulatorState::Running { simulation, topology } => {
+                self.state = SimulatorState::Running { simulation, topology }; // Restore state
                 Err(SimulatorError::AlreadyRunning)
             }
             SimulatorState::Idle => Err(SimulatorError::NotReady),
@@ -101,7 +95,7 @@ impl Simulator {
     /// Stop the simulation (Running -> Ready).
     pub fn stop(&mut self) -> Result<(), SimulatorError> {
         match mem::replace(&mut self.state, SimulatorState::Idle) {
-            SimulatorState::Running { simulation, started_at: _, topology } => {
+            SimulatorState::Running { simulation, topology } => {
                 simulation.stop().map_err(SimulatorError::StopSimulationFailed)?;
                 self.load_topology(topology)?;
                 Ok(())
@@ -119,7 +113,7 @@ impl Simulator {
     /// Note that multiple simulation log receivers will compete instead of each receiving all logs.
     pub fn log_receiver(&self) -> Result<SimulationReceiver<LogEntry>, SimulatorError> {
         match &self.state {
-            SimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.log_receiver()),
+            SimulatorState::Running { simulation, .. } => Ok(simulation.log_receiver()),
             _ => {
                 Err(SimulatorError::NotRunning)
             }
@@ -132,7 +126,7 @@ impl Simulator {
     /// Note that multiple simulation events receivers will compete instead of each receiving all logs.
     pub fn event_receiver(&self) -> Result<SimulationReceiver<ComponentEvent>, SimulatorError> {
         match &self.state {
-            SimulatorState::Running { simulation, started_at: _, topology: _ } => Ok(simulation.event_receiver()),
+            SimulatorState::Running { simulation, .. } => Ok(simulation.event_receiver()),
             _ => Err(SimulatorError::NotRunning),
         }
     }
@@ -141,7 +135,7 @@ impl Simulator {
     /// if the simulation is not running.
     pub fn component_handle(&self, name: &str) -> Result<&ComponentHandle, SimulatorError> {
         match &self.state {
-            SimulatorState::Running { simulation, started_at: _, topology: _ } => {
+            SimulatorState::Running { simulation, .. } => {
                 simulation.handle(name)
                     .ok_or_else(|| SimulatorError::ComponentNotFound(name.into()))
             }
@@ -154,21 +148,21 @@ impl Simulator {
         self.state.to_status_update()
     }
 
-    // /// Return a reference to the currently loaded [Topology]. Fails if the simulation is not ready
-    // /// or running.
-    // pub fn topology(&self) -> Result<&TopologySpec, SimulatorError> {
-    //     match &self.state {
-    //         SimulatorState::Ready { builder: _, topology } => Ok(topology),
-    //         SimulatorState::Running { simulation: _, started_at: _, topology } => Ok(topology),
-    //         _ => Err(SimulatorError::NoTopologyLoaded),
-    //     }
-    // }
-    //
-    // /// Return the instant the simulation was started. Fails if the simulation is not running.
-    // pub fn started_time(&self) -> Result<OffsetDateTime, SimulatorError> {
-    //     match self.state {
-    //         SimulatorState::Running { simulation: _, started_at: started_time, topology: _ } => Ok(started_time),
-    //         _ => Err(SimulatorError::NotRunning),
-    //     }
-    // }
+    /// Return a reference to the currently loaded [Topology]. Fails if the simulation is not ready
+    /// or running.
+    pub fn topology(&self) -> Result<&TopologySpec, SimulatorError> {
+        match &self.state {
+            SimulatorState::Ready { topology, .. } => Ok(topology),
+            SimulatorState::Running { topology, .. } => Ok(topology),
+            _ => Err(SimulatorError::NoTopologyLoaded),
+        }
+    }
+
+    /// Return the instant the simulation was started. Fails if the simulation is not running.
+    pub fn sim_started_at(&self) -> Result<Instant, SimulatorError> {
+        match &self.state {
+            SimulatorState::Running { simulation, .. } => Ok(simulation.started_at()),
+            _ => Err(SimulatorError::NotRunning),
+        }
+    }
 }

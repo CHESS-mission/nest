@@ -1,4 +1,4 @@
-use std::{collections::HashMap};
+use std::{collections::HashMap, time::Instant};
 
 use anyhow::{Result, bail};
 use crossbeam_channel::{Receiver, Select, TryRecvError};
@@ -129,11 +129,15 @@ impl SimulationBuilder {
 
 pub struct Simulation {
     component_handles: HashMap<String, ComponentHandle>,
+    started_at: Instant,
 }
 
 impl Simulation {
     pub fn new(component_handles: HashMap<String, ComponentHandle>) -> Self {
-        Self { component_handles }
+        Self {
+            component_handles,
+            started_at: Instant::now(),
+        }
     }
 
     pub fn handle(&self, name: &str) -> Option<&ComponentHandle> {
@@ -170,6 +174,11 @@ impl Simulation {
                 .map(|(name, handle)| (name.clone(), handle.event_receiver().clone()))
                 .collect()
         )
+    }
+
+    /// Return the instant the simulation was started.
+    pub fn started_at(&self) -> Instant {
+        self.started_at
     }
 }
 
@@ -212,36 +221,9 @@ impl<T> SimulationReceiver<T> {
 
         return msg
     }
-
-    // TODO: update to handle empty select panics
-    // pub fn recv_drain(&mut self) -> Vec<(String, T)> {
-    //     let mut sel = Select::new();
-    //
-    //     for (_source, receiver) in &self.receivers {
-    //         sel.recv(receiver);
-    //     }
-    //
-    //     let mut msgs = Vec::new();
-    //
-    //     // Helper to handle a single receiver result
-    //     let mut handle_recv = |index: usize, sel: &mut Select| {
-    //         let (source, receiver) = &self.receivers[index];
-    //         match receiver.try_recv() {
-    //             Ok(msg) => msgs.push((source.into(), msg)),
-    //             Err(TryRecvError::Empty) => return false,
-    //             Err(TryRecvError::Disconnected) => sel.remove(index),
-    //         }
-    //         true
-    //     };
-    //
-    //     // Wait for at least one entry
-    //     while !handle_recv(sel.ready(), &mut sel) {};
-    //
-    //     // Drain the rest without blocking
-    //     while let Ok(index) = sel.try_ready() {
-    //         handle_recv(index, &mut sel);
-    //     }
-    //
-    //     msgs
-    // }
 }
+
+// /// Registry for storing and querying environment variables
+// pub struct EnvironmentRegistry {
+//     variables: HashMap<AnyEnvironmentVar>
+// }

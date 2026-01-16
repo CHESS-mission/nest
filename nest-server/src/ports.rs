@@ -187,6 +187,11 @@ impl From<AnyEnvironmentVar> for AnyEnvironmentPort {
 }
 
 pub type EnvironmentVar<V> = Arc<RwLock<V>>;
+// #[derive(Debug, Clone)]
+// pub struct EnvironmentVar<V> {
+//     prev_value: V,
+//     next_value: V,
+// }
 
 any_env_var_enum!(AnyEnvironmentVar, EnvironmentVar);
 

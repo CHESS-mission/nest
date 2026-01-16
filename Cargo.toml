@@ -16,7 +16,6 @@ leptos_router = "0.8.3"
 wasm-bindgen = "=0.2.100"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-time = { version="0.3.44", features=["formatting", "parsing", "serde"] }
 
 # See https://github.com/leptos-rs/cargo-leptos for documentation of all the parameters.
 

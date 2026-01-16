@@ -1,5 +1,3 @@
-use time::OffsetDateTime;
-
 use nest_api::{LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO, LogLevelDTO};
 use leptos::{html::Div, logging, prelude::*, server::codee::string::FromToStringCodec};
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
@@ -19,7 +17,6 @@ pub enum SimulatorState {
     },
     Running {
         topology: TopologyDTO,
-        started_at: OffsetDateTime
     },
 }
 
@@ -46,7 +43,6 @@ impl From<StatusUpdate> for SimulatorState {
             },
             StatusUpdate::Running(update) => SimulatorState::Running {
                 topology: update.topology,
-                started_at: update.started_at
             },
         }
     }
@@ -269,13 +265,10 @@ fn SidePanel(
 
     let simulator_state = use_context::<ReadSignal<SimulatorState>>().expect("to have found the simulator state provided");
 
-    let (started_at, set_started_at) = signal(OffsetDateTime::UNIX_EPOCH);
-
     Effect::new(move || {
         simulator_state.with(move |sim_state| {
-            if let SimulatorState::Running { started_at, .. } = sim_state {
+            if let SimulatorState::Running { .. } = sim_state {
                 logs.update(|logs| logs.clear());
-                set_started_at.set(started_at.clone());
             }
         })
     });
@@ -304,16 +297,17 @@ fn SidePanel(
         });
     });
 
-    let format_time = move |timestamp: OffsetDateTime| {
-        let elapsed = timestamp - (*started_at.read());
-        let total_secs = elapsed.whole_seconds();
+    let format_timestamp = |timestamp: f64| {
+        let total_secs = timestamp.floor() as i64;
+
         let hours = total_secs / 3600;
         let minutes = (total_secs % 3600) / 60;
         let seconds = total_secs % 60;
-        let millis = elapsed.subsec_milliseconds();
+        let millis = ((timestamp - total_secs as f64) * 1000.0).round() as i64;
 
         format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
     };
+
 
     view! {
         <div class="p-3 flex flex-col bg-white rounded-xl border border-gray-300/50 shadow-md">
@@ -337,7 +331,7 @@ fn SidePanel(
                         let log = log.clone();
                         view! {
                             <div class="text-sm text-gray-400 font-mono">
-                                {format_time(log.timestamp)}
+                                {format_timestamp(log.timestamp)}
                                 ": ["
                                 <span class="text-gray-500 italic">
                                     {log.component}

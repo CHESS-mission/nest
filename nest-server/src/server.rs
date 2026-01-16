@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::{Arc}};
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use nest_api::{ErrorUpdate, EventUpdate, LogUpdate, NestApiAction, NestApiUpdate};
 use axum::{extract::{ws::{Message, WebSocket}, FromRef, State, WebSocketUpgrade}, response::Response, routing::any, Router};
@@ -62,6 +62,7 @@ impl UpdateBroadcaster {
     fn start(
         mut sim_log_receiver: SimulationReceiver<LogEntry>,
         mut sim_event_receiver: SimulationReceiver<ComponentEvent>,
+        sim_started_at: Instant,
         tx: broadcast::Sender<NestApiUpdate>,
     ) -> Self {
         let cancel = CancellationToken::new();
@@ -76,7 +77,9 @@ impl UpdateBroadcaster {
                 match sim_log_receiver.recv() {
                     Some((source, log)) => {
                         let _ = log_tx.send(NestApiUpdate::Log(LogUpdate {
-                            timestamp: log.timestamp,
+                            timestamp: log.timestamp
+                                .duration_since(sim_started_at)
+                                .as_secs_f64(),
                             level: log.level,
                             component: source,
                             message: log.message
@@ -262,7 +265,7 @@ async fn handle_client_action(
 
     match action {
         NestApiAction::Start => {
-            let (log_receiver, event_receiver, new_status) = {
+            let (log_receiver, event_receiver, new_status, sim_started_at) = {
                 let mut sim = state.simulator.lock().await;
 
                 // Start simulation
@@ -272,11 +275,16 @@ async fn handle_client_action(
                 });
 
                 // Get log & event receivers
-                (sim.log_receiver()?, sim.event_receiver()?, sim.status())
+                (sim.log_receiver()?, sim.event_receiver()?, sim.status(), sim.sim_started_at()?)
             };
 
             // Start a new update broadcaster
-            let broadcaster = UpdateBroadcaster::start(log_receiver, event_receiver, state.update_tx.clone());
+            let broadcaster = UpdateBroadcaster::start(
+                log_receiver,
+                event_receiver,
+                sim_started_at,
+                state.update_tx.clone()
+            );
             *state.update_broadcaster.lock().await = Some(broadcaster);
 
             // Broadcast new status
@@ -342,7 +350,7 @@ async fn handle_client_action(
             }
         }
 
-        NestApiAction::SetEnv(set_env) => {
+        NestApiAction::SetEnv(_set_env) => {
             // TODO: add environment to simulation
             tracing::debug!("SetEnv action is not implemented yet");
         }

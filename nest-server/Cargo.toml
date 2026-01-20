@@ -10,6 +10,8 @@ leptos = { workspace = true, features = [ "ssr" ]}
 leptos_axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+nalgebra.workspace = true
+ndarray.workspace = true
 
 axum = { version = "0.8.4", features = ["macros"] }
 wasmtime = "37.0.1"
@@ -26,8 +28,6 @@ vmm-sys-util = "0.12"
 uuid = "1.17.0"
 futures-util = "0.3.31"
 yaml-rust2 = "0.10.4"
-nalgebra = "0.34.1"
-ndarray = "0.17.1"
 tokio-util = "0.7.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

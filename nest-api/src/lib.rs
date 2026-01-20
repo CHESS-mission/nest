@@ -32,7 +32,37 @@ pub struct CommandAction {
 #[derive(Serialize, Deserialize)]
 pub struct SetEnvAction {
     pub variable: String,
-    pub value: serde_json::Value,
+    pub value: EnvVarValue,
+    #[serde(default)]
+    pub lerp_over_s: Option<f32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+#[serde(rename_all = "snake_case")]
+pub enum EnvVarValue {
+    Int(i32),
+    Float(f32),
+    Bool(bool),
+    Vec2(nalgebra::Vector2<f32>),
+    Vec3(nalgebra::Vector3<f32>),
+    Quaternion(nalgebra::UnitQuaternion<f32>),
+    Tensor(ndarray::ArrayD<f32>),
+}
+
+// Useful for error messages in case of type mismatch
+impl EnvVarValue {
+    pub fn type_str(&self) -> &'static str {
+        match self {
+            Self::Int(_) => "int",
+            Self::Float(_) => "float",
+            Self::Bool(_) => "bool",
+            Self::Vec2(_) => "vec2",
+            Self::Vec3(_) => "vec3",
+            Self::Quaternion(_) => "quaternion",
+            Self::Tensor(_) => "tensor",
+        }
+    }
 }
 
 // Updates (server -> client)

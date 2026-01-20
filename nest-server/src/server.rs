@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc, time::Instant};
+use std::{net::SocketAddr, sync::Arc, time::{Instant}};
 
 use nest_api::{ErrorUpdate, EventUpdate, LogUpdate, NestApiAction, NestApiUpdate};
 use axum::{extract::{ws::{Message, WebSocket}, FromRef, State, WebSocketUpgrade}, response::Response, routing::any, Router};
@@ -350,9 +350,19 @@ async fn handle_client_action(
             }
         }
 
-        NestApiAction::SetEnv(_set_env) => {
-            // TODO: add environment to simulation
-            tracing::debug!("SetEnv action is not implemented yet");
+        NestApiAction::SetEnv(set_env) => {
+            let res = {
+                let sim = state.simulator.lock().await;
+                sim.env_var(&set_env.variable)
+                    .inspect_err(|e| tracing::warn!("couldn't set environment variable: {}", e))
+                    .cloned()
+            };
+
+            if let Ok(any_var) = res {
+                let _ = any_var.set_from_api(set_env).inspect_err(|e|
+                    tracing::warn!("couldn't set environment variable: {}", e)
+                );
+            }
         }
     }
 

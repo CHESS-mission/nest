@@ -2,7 +2,12 @@ use std::{mem, time::Instant};
 
 use thiserror::Error;
 
-use crate::{component::{ComponentEvent, ComponentHandle, LogEntry}, parser::specs::TopologySpec, simulation::{Simulation, SimulationBuilder, SimulationReceiver}};
+use crate::{
+    component::{ComponentEvent, ComponentHandle, LogEntry},
+    environment::AnySharedEnvironmentVar,
+    parser::specs::TopologySpec,
+    simulation::{Simulation, SimulationBuilder, SimulationReceiver},
+};
 
 /// Custom errors for simulator operations.
 #[derive(Debug, Error)]
@@ -25,6 +30,8 @@ pub enum SimulatorError {
     StopSimulationFailed(anyhow::Error),
     #[error("Failed to find component {0} in the simulation")]
     ComponentNotFound(String),
+    #[error("Failed to find environment variable {0} in the simulation")]
+    EnvVarNotFound(String),
 }
 
 enum SimulatorState {
@@ -138,6 +145,18 @@ impl Simulator {
             SimulatorState::Running { simulation, .. } => {
                 simulation.handle(name)
                     .ok_or_else(|| SimulatorError::ComponentNotFound(name.into()))
+            }
+            _ => Err(SimulatorError::NotRunning),
+        }
+    }
+
+    /// Return an [AnySharedEnvironmentVar] for matching the given name. Fails if the simulation is
+    /// not running.
+    pub fn env_var(&self, name: &str) -> Result<&AnySharedEnvironmentVar, SimulatorError> {
+        match &self.state {
+            SimulatorState::Running { simulation, .. } => {
+                simulation.env_var(name)
+                    .ok_or_else(|| SimulatorError::EnvVarNotFound(name.into()))
             }
             _ => Err(SimulatorError::NotRunning),
         }

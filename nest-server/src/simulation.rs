@@ -8,16 +8,14 @@ use crate::{
         Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, qemu::QemuComponent,
         wasm::WasmComponent,
     },
+    environment::{AnySharedEnvironmentVar, SharedEnvironmentVar},
     parser::specs::{ComponentTypeSpec, EnvPortTypeSpec, PortTypeSpec, TopologySpec},
-    ports::{
-        AnyEnvironmentPort, AnyEnvironmentVar, AnySystemPortBuilder, EnvironmentVar,
-        SystemPortBuilder,
-    },
+    ports::{AnyEnvironmentPort, AnySystemPortBuilder, SystemPortBuilder},
 };
 
 pub struct SimulationBuilder {
     components: HashMap<String, Box<dyn Component>>,
-    environment: HashMap<String, AnyEnvironmentVar>,
+    environment: HashMap<String, AnySharedEnvironmentVar>,
 }
 
 impl SimulationBuilder {
@@ -69,18 +67,18 @@ impl SimulationBuilder {
         }
 
         // Create environment
-        let mut environment: HashMap<String, AnyEnvironmentVar> = HashMap::new();
+        let mut environment: HashMap<String, AnySharedEnvironmentVar> = HashMap::new();
         for env_var in &topology.environment {
             environment.insert(
                 env_var.name.clone(),
                 match env_var.var_type {
-                    EnvPortTypeSpec::Int => AnyEnvironmentVar::Int(EnvironmentVar::default()),
-                    EnvPortTypeSpec::Float => AnyEnvironmentVar::Float(EnvironmentVar::default()),
-                    EnvPortTypeSpec::Bool => AnyEnvironmentVar::Bool(EnvironmentVar::default()),
-                    EnvPortTypeSpec::Vec2 => AnyEnvironmentVar::Vec2(EnvironmentVar::default()),
-                    EnvPortTypeSpec::Vec3 => AnyEnvironmentVar::Vec3(EnvironmentVar::default()),
-                    EnvPortTypeSpec::Quaternion => AnyEnvironmentVar::Quaternion(EnvironmentVar::default()),
-                    EnvPortTypeSpec::Tensor => AnyEnvironmentVar::Tensor(EnvironmentVar::default()),
+                    EnvPortTypeSpec::Int => AnySharedEnvironmentVar::Int(SharedEnvironmentVar::default()),
+                    EnvPortTypeSpec::Float => AnySharedEnvironmentVar::Float(SharedEnvironmentVar::default()),
+                    EnvPortTypeSpec::Bool => AnySharedEnvironmentVar::Bool(SharedEnvironmentVar::default()),
+                    EnvPortTypeSpec::Vec2 => AnySharedEnvironmentVar::Vec2(SharedEnvironmentVar::default()),
+                    EnvPortTypeSpec::Vec3 => AnySharedEnvironmentVar::Vec3(SharedEnvironmentVar::default()),
+                    EnvPortTypeSpec::Quaternion => AnySharedEnvironmentVar::Quaternion(SharedEnvironmentVar::default()),
+                    EnvPortTypeSpec::Tensor => AnySharedEnvironmentVar::Tensor(SharedEnvironmentVar::default()),
                 }
             );
         }
@@ -123,25 +121,34 @@ impl SimulationBuilder {
             .map(|(name, component)| Ok((name, component.start()?)))
             .collect::<Result<_>>()?;
 
-        Ok(Simulation::new(handles))
+        Ok(Simulation::new(handles, self.environment))
     }
 }
 
 pub struct Simulation {
     component_handles: HashMap<String, ComponentHandle>,
+    environment: HashMap<String, AnySharedEnvironmentVar>,
     started_at: Instant,
 }
 
 impl Simulation {
-    pub fn new(component_handles: HashMap<String, ComponentHandle>) -> Self {
+    pub fn new(
+        component_handles: HashMap<String, ComponentHandle>,
+        environment: HashMap<String, AnySharedEnvironmentVar>) -> Self
+    {
         Self {
             component_handles,
+            environment,
             started_at: Instant::now(),
         }
     }
 
     pub fn handle(&self, name: &str) -> Option<&ComponentHandle> {
         self.component_handles.get(name)
+    }
+
+    pub fn env_var(&self, name: &str) -> Option<&AnySharedEnvironmentVar> {
+        self.environment.get(name)
     }
 
     pub fn stop(self) -> Result<()> {
@@ -223,7 +230,3 @@ impl<T> SimulationReceiver<T> {
     }
 }
 
-// /// Registry for storing and querying environment variables
-// pub struct EnvironmentRegistry {
-//     variables: HashMap<AnyEnvironmentVar>
-// }

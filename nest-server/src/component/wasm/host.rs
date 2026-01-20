@@ -10,8 +10,11 @@ use crate::{
         },
     },
     ports::{
-        BoolMessage, BytesMessage, FloatMessage, I2cMessage, IntMessage, QuaternionVar, TensorVar, TextMessage, Vec2Var, Vec3Var
+        BoolMessage, BytesMessage, FloatMessage, I2cMessage, IntMessage, TextMessage
     },
+    environment::{
+        QuaternionVar, TensorVar, Vec2Var, Vec3Var
+    }
 };
 
 bindgen!("nest-component" in "src/component/wasm/wit");

@@ -1,4 +1,5 @@
 pub mod component;
+pub mod config;
 pub mod environment;
 pub mod parser;
 pub mod ports;

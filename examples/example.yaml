@@ -1,11 +1,9 @@
 environment_variables:
-  - 
-    name: test
-    type: text
+  - name: B_field
+    type: vec3
 
 components:
-  - 
-    name: QEMU
+  - name: QEMU
     type: qemu
     config:
       arch: arm
@@ -34,20 +32,24 @@ components:
     ports:
       system:
         - name: i2c
-          type: json
-  - 
-    name: TEMP
+          type: i2c
+
+  - name: MMC5983MA
     type: wasm
     config:
-      module: component_artifacts/sensor_temp.wasm
+      module: component_artifacts/mmc5983ma.wasm
     ports:
       system:
-      - name: i2c
-        type: json
+        - name: i2c
+          type: i2c
+      environment:
+        - name: mag-field
+          variable: B_field
+          type: vec3
 
 wires:
   - 
     - component: QEMU
       port: i2c
-    - component: TEMP
+    - component: MMC5983MA
       port: i2c

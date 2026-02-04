@@ -1,5 +1,5 @@
-use nest_api::{LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO, LogLevelDTO};
-use leptos::{html::Div, logging, prelude::*, server::codee::string::FromToStringCodec};
+use nest_api::{LogLevelDTO, LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO, UploadTopologyAction};
+use leptos::{html::{Div, Input}, logging, prelude::*, server::codee::string::FromToStringCodec};
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
@@ -8,6 +8,7 @@ use leptos_router::{
 use leptos_use::{core::ConnectionReadyState, use_websocket_with_options, UseWebSocketOptions, UseWebSocketReturn};
 use leptos_icons::Icon;
 use icondata as i;
+use web_sys::{Event, File, FileReader, wasm_bindgen::{closure::Closure, JsCast}};
 
 #[derive(Clone, Debug)]
 pub enum SimulatorState {
@@ -148,6 +149,44 @@ fn HomePage() -> impl IntoView {
         })
     });
 
+    let load_topology = {
+        let send = send.clone();
+
+        move |file: File| {
+            let reader = FileReader::new().expect("create FileReader");
+
+            // Clone what we need inside the async callback
+            let send = send.clone();
+
+            let onload = {
+                let reader = reader.clone();
+                Closure::once(move |_: web_sys::ProgressEvent| {
+                    let content = reader
+                        .result()
+                        .expect("file reader result")
+                        .as_string()
+                        .expect("file content to be string");
+
+                    let msg = serde_json::to_string(
+                        &NestApiAction::UploadTopology(
+                            UploadTopologyAction {
+                                topology_yaml: content,
+                            }
+                        )
+                    ).unwrap();
+
+                    send(&msg);
+                })
+            };
+
+            reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+            reader.read_as_text(&file).expect("read file");
+
+            // Prevent the closure from being dropped
+            onload.forget();
+        }
+    };
+    
     let simulator_start = {
         let send = send.clone();
         move || send(&serde_json::to_string(&NestApiAction::Start).unwrap())
@@ -169,6 +208,7 @@ fn HomePage() -> impl IntoView {
                 ws_disconnect=close
                 start=simulator_start
                 stop=simulator_stop
+                load_topology=load_topology
             />
             <div class="grow p-4 flex overflow-hidden">
                 // Side Panel
@@ -188,10 +228,13 @@ fn Header(
     ws_disconnect: impl Fn() + 'static,
     start: impl Fn() + 'static,
     stop: impl Fn() + 'static,
+    load_topology: impl Fn(File) + 'static,
 ) -> impl IntoView {
     let connected = move || ws_ready_state.get() == ConnectionReadyState::Open;
 
-    let simulator_state = use_context::<ReadSignal<SimulatorState>>().expect("to have found the simulator state provided");
+    let simulator_state =
+        use_context::<ReadSignal<SimulatorState>>()
+            .expect("to have found the simulator state provided");
 
     let start_stop_label = move || match *simulator_state.read() {
         SimulatorState::Running { .. } => "stop",
@@ -214,17 +257,53 @@ fn Header(
         SimulatorState::Running { .. } => stop(),
     };
 
+    let file_input = NodeRef::<Input>::new();
+
+    let on_select_topology_file = move |ev: Event| {
+        ev.prevent_default();
+
+        if let Some(files) = file_input.get().unwrap().files() {
+            if let Some(file) = files.get(0) {
+                load_topology(file);
+            }
+        }
+    };
+
     view! {
         <div class="px-2 pt-1 pb-2 flex bg-white border border-gray-300/50 shadow-md">
             <div class="ml-1 flex items-center text-gray-950 text-5xl font-extralight">
                 "NEST"
             </div>
+
             <div class="flex flex-col grow">
                 <div class="flex justify-end">
-                    <ConnectionWidget ws_ready_state=ws_ready_state ws_connect=ws_connect ws_disconnect=ws_disconnect/>
+                    <ConnectionWidget
+                        ws_ready_state=ws_ready_state
+                        ws_connect=ws_connect
+                        ws_disconnect=ws_disconnect
+                    />
                 </div>
+
                 <div class="mt-1 flex justify-end">
-                    <div class="flex items-center">
+                    <div class="flex items-center gap-2">
+                        <input
+                            type="file"
+                            class="hidden"
+                            node_ref=file_input
+                            on:change=on_select_topology_file
+                        />
+
+                        <Button
+                            label="load topology"
+                            icon=i::TbLinkOutline // TODO
+                            on:click=move |_| {
+                                if let Some(input) = file_input.get() {
+                                    input.click();
+                                }
+                            }
+                            attr:disabled=move || !connected() || simulator_state.with(|s| s.is_running())
+                        />
+
                         <Button
                             label=Signal::derive(start_stop_label)
                             icon=Signal::derive(start_stop_icon)

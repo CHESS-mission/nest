@@ -1,10 +1,11 @@
+use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use nest_server::{
-    parser::specs::TopologySpec, server::NestServer, simulator::Simulator
+    config::Config, server::NestServer
 };
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -12,17 +13,10 @@ async fn main() {
         )
         .init();
 
-    let conf = leptos::config::get_configuration(None).unwrap();
-    let addr = conf.leptos_options.site_addr;
+    let config = Config::parse();
+    let server = NestServer::from_config(config)?;
+    server.serve().await?;
 
-    let mut simulator = Simulator::new();
-    let topology = create_topology();
-    simulator.load_topology(topology).unwrap();
-
-    let server = NestServer::new(addr, simulator);
-    server.serve().await;
+    Ok(())
 }
 
-fn create_topology() -> TopologySpec {
-    TopologySpec::from_yaml("example/example.yaml").unwrap()
-}

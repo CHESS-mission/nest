@@ -10,7 +10,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
-use crate::{component::{ComponentEvent, LogEntry}, simulation::SimulationReceiver, simulator::{Simulator, SimulatorError}};
+use crate::{component::{ComponentEvent, LogEntry}, config::Config, parser::specs::TopologySpec, simulation::SimulationReceiver, simulator::{Simulator, SimulatorError}};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -76,14 +76,14 @@ impl UpdateBroadcaster {
             while !log_cancel.is_cancelled() {
                 match sim_log_receiver.recv() {
                     Some((source, log)) => {
-                        let _ = log_tx.send(NestApiUpdate::Log(LogUpdate {
+                        log_tx.send(NestApiUpdate::Log(LogUpdate {
                             timestamp: log.timestamp
                                 .duration_since(sim_started_at)
                                 .as_secs_f64(),
                             level: log.level,
                             component: source,
                             message: log.message
-                        }));
+                        })).ok();
                     }
                     None => break, // receiver ended naturally
                 }
@@ -94,17 +94,17 @@ impl UpdateBroadcaster {
             while !event_cancel.is_cancelled() {
                 match sim_event_receiver.recv() {
                     Some((source, ComponentEvent::SimulationEvent { event, value })) => {
-                        let _ = event_tx.send(NestApiUpdate::Event(EventUpdate {
+                        event_tx.send(NestApiUpdate::Event(EventUpdate {
                             component: source,
                             event: event,
                             data: value,
-                        }));
+                        })).ok();
                     }
                     Some((source, ComponentEvent::Error(message))) => {
-                        let _ = event_tx.send(NestApiUpdate::Error(ErrorUpdate {
+                        event_tx.send(NestApiUpdate::Error(ErrorUpdate {
                             component: source,
                             message
-                        }));
+                        })).ok();
                     }
                     None => break,
                 }
@@ -116,8 +116,8 @@ impl UpdateBroadcaster {
 
     async fn stop(self) {
         self.cancel.cancel();
-        let _ = self.log_join.await;
-        let _ = self.event_join.await;
+        self.log_join.await.ok();
+        self.event_join.await.ok();
     }
 }
 
@@ -131,8 +131,24 @@ impl NestServer {
         Self { addr, simulator }
     }
 
-    pub async fn serve(self) {
-        let conf = get_configuration(None).unwrap();
+    pub fn from_config(config: Config) -> anyhow::Result<Self> {
+        let mut simulator = Simulator::new();
+
+        if let Some(path) = config.topology {
+            let topology = TopologySpec::from_yaml_file(&path)?;
+            simulator.load_topology(topology)?;
+
+            if config.start { simulator.start()?; }
+        }
+
+        Ok(Self {
+            addr: config.listen,
+            simulator
+        })
+    }
+
+    pub async fn serve(self) -> anyhow::Result<()> {
+        let conf = get_configuration(None)?;
         let leptos_options = conf.leptos_options;
 
         // Channels
@@ -165,8 +181,10 @@ impl NestServer {
             .with_state(state);
 
         tracing::info!(addr = %self.addr, "listening on http://{}", self.addr);
-        let listener = tokio::net::TcpListener::bind(&self.addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(&self.addr).await?;
+        axum::serve(listener, app).await?;
+
+        Ok(())
     }
 }
 
@@ -270,9 +288,9 @@ async fn handle_client_action(
 
                 // Start simulation
                 tracing::info!("starting simulation");
-                let _ = sim.start().inspect_err(|e| {
+                sim.start().inspect_err(|e| {
                     tracing::warn!("couldn't start simulation: {}", e);
-                });
+                }).ok();
 
                 // Get log & event receivers
                 (sim.log_receiver()?, sim.event_receiver()?, sim.status(), sim.sim_started_at()?)
@@ -299,9 +317,9 @@ async fn handle_client_action(
 
                 // Stop simulation
                 tracing::info!("stopping simulation");
-                let _ = sim.stop().inspect_err(|e| {
+                sim.stop().inspect_err(|e| {
                     tracing::warn!("couldn't stop simulation: {}", e);
-                });
+                }).ok();
 
                 sim.status()
             };
@@ -317,26 +335,29 @@ async fn handle_client_action(
             ).map_err(|_| WsError::ClientGone)?;
         }
 
-        NestApiAction::UploadTopology(_upload) => {
-            // TODO: parse yaml into TopologySpec
-            tracing::debug!("UploadTopology action is not implemented yet");
+        NestApiAction::UploadTopology(upload) => {
+            // Parse yaml into TopologySpec
+            match TopologySpec::from_yaml(&upload.topology_yaml) {
+                Ok(spec) => {
+                    let new_status = {
+                        let mut sim = state.simulator.lock().await;
 
-            // let new_status = {
-            //     let mut sim = state.simulator.lock().await;
-            //
-            //     // Load new topology
-            //     tracing::info!("loading topology");
-            //     let _ = sim.load_topology(spec).inspect_err(|e| {
-            //         tracing::warn!("couldn't load topology: {}", e);
-            //     });
-            //
-            //     sim.status()
-            // };
-            //
-            // // Broadcast new status
-            // state.update_tx.send(
-            //     NestApiUpdate::Status(new_status)
-            // ).map_err(|_| WsError::ClientGone)?;
+                        // Load new topology
+                        tracing::info!("loading topology");
+                        sim.load_topology(spec).inspect_err(|e| {
+                            tracing::warn!("couldn't load topology: {}", e);
+                        }).ok();
+
+                        sim.status()
+                    };
+
+                    // Broadcast new status
+                    state.update_tx.send(
+                        NestApiUpdate::Status(new_status)
+                    ).map_err(|_| WsError::ClientGone)?;
+                }
+                Err(e) => tracing::warn!("couldn't parse topology: {}", e),
+            }
         }
 
         NestApiAction::Command(cmd) => {
@@ -359,9 +380,9 @@ async fn handle_client_action(
             };
 
             if let Ok(any_var) = res {
-                let _ = any_var.set_from_api(set_env).inspect_err(|e|
+                any_var.set_from_api(set_env).inspect_err(|e|
                     tracing::warn!("couldn't set environment variable: {}", e)
-                );
+                ).ok();
             }
         }
     }

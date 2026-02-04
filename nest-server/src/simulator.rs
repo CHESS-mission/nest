@@ -18,8 +18,8 @@ pub enum SimulatorError {
     NotRunning,
     #[error("Invalid state for operation: no topology loaded")]
     NotReady,
-    #[error("Invalid state for operation: a topology is already loaded")]
-    AlreadyReady,
+    #[error("Invalid state for operation: can't load topology while running")]
+    LoadTopologyWhileRunning,
     #[error("No topology loaded")]
     NoTopologyLoaded,
     #[error("Failed to initialize simulation from topology: {0}")]
@@ -70,10 +70,10 @@ impl Simulator {
         Self { state: SimulatorState::Idle }
     }
 
-    /// Load a topology (Idle -> Ready).
+    /// Load a topology (Idle | Ready -> Ready).
     pub fn load_topology(&mut self, topology: TopologySpec) -> Result<(), SimulatorError> {
-        if !matches!(self.state, SimulatorState::Idle) {
-            return Err(SimulatorError::AlreadyReady);
+        if matches!(self.state, SimulatorState::Running { .. }) {
+            return Err(SimulatorError::LoadTopologyWhileRunning);
         }
         let builder = SimulationBuilder::from_topology(&topology)
             .map_err(SimulatorError::LoadTopologyFailed)?;

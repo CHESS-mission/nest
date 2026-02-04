@@ -1,7 +1,7 @@
 pub mod error;
 pub mod specs;
 
-use std::{fs, str::FromStr};
+use std::{fs, path::PathBuf, str::FromStr};
 
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -10,17 +10,21 @@ use error::*;
 use specs::*;
 
 impl TopologySpec {
-    pub fn from_yaml(root: &str) -> Result<Self, ParserError> {
-        match YamlLoader::load_from_str(match &fs::read_to_string(root) {
-            Ok(r) => r,
-            Err(_) => return Err(ParserError::InvalidFormat),
-        }) {
+    pub fn from_yaml(yaml: &str) -> Result<Self, ParserError> {
+        match YamlLoader::load_from_str(yaml) {
             Ok(doc) => match doc.last() {
                 Some(yaml) => parse_topology(yaml),
                 None => Err(ParserError::InvalidFormat),
             },
             Err(_) => return Err(ParserError::InvalidFormat),
         }
+    }
+
+    pub fn from_yaml_file(file: &PathBuf) -> Result<Self, ParserError> {
+        Self::from_yaml(match &fs::read_to_string(file) {
+            Ok(r) => r,
+            Err(_) => return Err(ParserError::InvalidFormat),
+        }) 
     }
 }
 

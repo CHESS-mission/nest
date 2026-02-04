@@ -111,7 +111,6 @@ impl SimulationBuilder {
             }
         }
 
-
         Ok(SimulationBuilder { components, environment })
     }
 

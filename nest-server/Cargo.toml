@@ -2,6 +2,7 @@
 name = "nest-server"
 version = "0.1.0"
 edition = "2024"
+description = "NEST server executable."
 
 [dependencies]
 nest-api = { path = "../nest-api" }
@@ -31,3 +32,4 @@ yaml-rust2 = "0.10.4"
 tokio-util = "0.7.18"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+clap = { version = "4.5.54", features = ["derive", "env"] }

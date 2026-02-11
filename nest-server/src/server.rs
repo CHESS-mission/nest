@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc, time::{Instant}};
 
-use nest_api::{ErrorUpdate, EventUpdate, LogUpdate, NestApiAction, NestApiUpdate};
+use nest_api::{ErrorUpdate, EventUpdate, LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate};
 use axum::{extract::{ws::{Message, WebSocket}, FromRef, State, WebSocketUpgrade}, response::Response, routing::any, Router};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use leptos::prelude::*;
@@ -101,6 +101,7 @@ impl UpdateBroadcaster {
                         })).ok();
                     }
                     Some((source, ComponentEvent::Error(message))) => {
+                        tracing::error!(component = %source, "Component error ({}): {}", source, message);
                         event_tx.send(NestApiUpdate::Error(ErrorUpdate {
                             component: source,
                             message
@@ -123,12 +124,13 @@ impl UpdateBroadcaster {
 
 pub struct NestServer {
     addr: SocketAddr,
+    start_immediately: bool,
     simulator: Simulator,
 }
 
 impl NestServer {
-    pub fn new(addr: SocketAddr, simulator: Simulator) -> Self {
-        Self { addr, simulator }
+    pub fn new(addr: SocketAddr, start_immediately: bool, simulator: Simulator) -> Self {
+        Self { addr, start_immediately, simulator }
     }
 
     pub fn from_config(config: Config) -> anyhow::Result<Self> {
@@ -137,12 +139,11 @@ impl NestServer {
         if let Some(path) = config.topology {
             let topology = TopologySpec::from_yaml_file(&path)?;
             simulator.load_topology(topology)?;
-
-            if config.start { simulator.start()?; }
         }
 
         Ok(Self {
             addr: config.listen,
+            start_immediately: config.start,
             simulator
         })
     }
@@ -161,6 +162,10 @@ impl NestServer {
             update_broadcaster: Arc::new(Mutex::new(None)),
             leptos_options,
         };
+
+        if self.start_immediately {
+            start_simulation(&state).await?;
+        }
 
         // Leptos routes
         let routes = generate_route_list(App);
@@ -283,27 +288,7 @@ async fn handle_client_action(
 
     match action {
         NestApiAction::Start => {
-            let (log_receiver, event_receiver, new_status, sim_started_at) = {
-                let mut sim = state.simulator.lock().await;
-
-                // Start simulation
-                tracing::info!("starting simulation");
-                sim.start().inspect_err(|e| {
-                    tracing::warn!("couldn't start simulation: {}", e);
-                }).ok();
-
-                // Get log & event receivers
-                (sim.log_receiver()?, sim.event_receiver()?, sim.status(), sim.sim_started_at()?)
-            };
-
-            // Start a new update broadcaster
-            let broadcaster = UpdateBroadcaster::start(
-                log_receiver,
-                event_receiver,
-                sim_started_at,
-                state.update_tx.clone()
-            );
-            *state.update_broadcaster.lock().await = Some(broadcaster);
+            let new_status = start_simulation(state).await?;
 
             // Broadcast new status
             state.update_tx.send(
@@ -388,5 +373,31 @@ async fn handle_client_action(
     }
 
     Ok(())
+}
+
+async fn start_simulation(state: &NestServerState) -> Result<StatusUpdate, WsError> {
+    let (log_receiver, event_receiver, new_status, sim_started_at) = {
+        let mut sim = state.simulator.lock().await;
+
+        // Start simulation
+        tracing::info!("starting simulation");
+        sim.start().inspect_err(|e| {
+            tracing::warn!("couldn't start simulation: {}", e);
+        }).ok();
+
+        // Get log & event receivers
+        (sim.log_receiver()?, sim.event_receiver()?, sim.status(), sim.sim_started_at()?)
+    };
+
+    // Start a new update broadcaster
+    let broadcaster = UpdateBroadcaster::start(
+        log_receiver,
+        event_receiver,
+        sim_started_at,
+        state.update_tx.clone()
+    );
+    *state.update_broadcaster.lock().await = Some(broadcaster);
+
+    Ok(new_status)
 }
 

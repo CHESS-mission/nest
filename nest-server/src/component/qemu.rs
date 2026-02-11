@@ -1,4 +1,5 @@
 mod instance;
+mod uart;
 mod gpio;
 mod i2c;
 
@@ -9,11 +10,11 @@ use anyhow::{anyhow, Result, bail};
 
 use crate::{
     component::{
-        qemu::{
-            gpio::{messaging::GpioEvent, start_gpio_backend, GpioLine}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}
-        }, Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, MessageDispatcher
+        Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, MessageDispatcher, qemu::{
+            gpio::{GpioLine, messaging::GpioEvent, start_gpio_backend}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}, uart::{UartPort, UartTransaction, start_uart_backend}
+        }
     },
-    ports::{BoolMessage, I2cMessage, SystemPort},
+    ports::{BoolMessage, BytesMessage, I2cMessage, SystemPort},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -44,15 +45,14 @@ pub struct QemuComponentConfig {
     pub i2c_socket: Option<String>,
     #[serde(default = "default_i2c_timeout_ms")]
     pub i2c_timeout_ms: u64,
+    #[serde(default)]
+    pub nuart: u32,
+    #[serde(default)]
+    pub uart_sockets: HashMap<String, String>,
 }
 
-fn default_ngpio() -> u32 {
-    32
-}
-
-fn default_i2c_timeout_ms() -> u64 {
-    100
-}
+fn default_ngpio() -> u32 { 32 }
+fn default_i2c_timeout_ms() -> u64 { 100 }
 
 pub struct QemuComponentState {
     update_status: bool,
@@ -67,13 +67,19 @@ impl QemuComponentState {
 
 pub struct QemuComponent {
     config: QemuComponentConfig,
+    uart_ports: Vec<SystemPort<BytesMessage>>,
     gpio_lines: Vec<GpioLine>,
     gpio_ports: Vec<SystemPort<BoolMessage>>,
     i2c_port: SystemPort<I2cMessage>,
 }
 
 impl QemuComponent {
-    pub fn new(config: QemuComponentConfig, gpio_ports: Vec<SystemPort<BoolMessage>>, i2c_port: SystemPort<I2cMessage>) -> Result<Self> {
+    pub fn new(
+        config: QemuComponentConfig,
+        uart_ports: Vec<SystemPort<BytesMessage>>,
+        gpio_ports: Vec<SystemPort<BoolMessage>>,
+        i2c_port: SystemPort<I2cMessage>
+    ) -> Result<Self> {
         let mut gpio_lines = vec![GpioLine::default(); config.ngpio as usize];
         for (i, name) in &config.gpio_names {
             let idx: usize = i.parse()?;
@@ -82,13 +88,23 @@ impl QemuComponent {
                 .name = Some(name.clone());
         }
 
-        Ok(Self { config, gpio_lines, gpio_ports, i2c_port })
+        Ok(Self { config, uart_ports, gpio_lines, gpio_ports, i2c_port })
     }
 }
 
 impl Component for QemuComponent {
     fn start(self: Box<Self>) -> Result<ComponentHandle> {
         let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, _status| {
+            // Create uart port sockets
+            let uart_ports: Vec<UartPort> = (0..self.config.nuart).map(|i| {
+                self.config.uart_sockets.get(&i.to_string()).map(PathBuf::from).unwrap_or_else(||
+                    std::env::temp_dir().join(format!("vuart{}-{}.sock", i, uuid::Uuid::new_v4()))
+                )
+            }).map(UartPort::new).collect();
+
+            // Start uart backend
+            let uart_backend_handle = start_uart_backend(uart_ports.clone(), logger.clone())?;
+
             // Create gpio socket
             let gpio_socket = self.config.gpio_socket.as_ref().map(PathBuf::from).unwrap_or_else(||
                 std::env::temp_dir().join(format!("vgpio-{}.sock", uuid::Uuid::new_v4()))
@@ -115,6 +131,11 @@ impl Component for QemuComponent {
                 }
             }
 
+            // Set uart backend sockets
+            for uart_port in uart_ports {
+                qemu_config.add_uart_socket(uart_port.socket);
+            }
+
             // Set gpio backend socket
             qemu_config.set_gpio_backend_socket(gpio_socket);
 
@@ -122,7 +143,13 @@ impl Component for QemuComponent {
             qemu_config.set_i2c_backend_socket(i2c_socket);
 
             // Start qemu instance
-            let qemu_instance = QemuInstance::spawn(qemu_config)?;
+            let qemu_stdout_logger = logger.clone();
+            let qemu_stderr_logger = logger.clone();
+            let qemu_instance = QemuInstance::spawn(
+                qemu_config,
+                move |line| { let _ = qemu_stdout_logger.info(format!("Qemu stdout: {}", line)); }, 
+                move |line| { let _ = qemu_stderr_logger.error(format!("Qemu stderr: {}", line)); }, 
+            )?;
             logger.info(format!("Spawned QEMU instance: {}", qemu_instance.cmd_line()))?;
 
             let mut dispatcher = MessageDispatcher::<QemuComponentState>::new();
@@ -139,13 +166,34 @@ impl Component for QemuComponent {
                     },
                     ComponentHandleCommand::StartStatusUpdates => state.update_status = true,
                     ComponentHandleCommand::StopStatusUpdates => state.update_status = false,
-                    ComponentHandleCommand::SimulatorCommand { command, args } => {
+                    ComponentHandleCommand::SimulatorCommand { command: _command, args: _args } => {
                         todo!();
                     }
                 }
 
                 Ok(HandlerStatus::Ok)
             }));
+
+            // Register uart backend requests handler
+            dispatcher.register(uart_backend_handle.data_rx.clone(), Box::new(|trx, _state| {
+                if let Some(port) = self.uart_ports.get(trx.port) {
+                    port.send(trx.data);
+                } else {
+                    logger.error(format!("UART port out of range: {}", trx.port))?;
+                }
+
+                Ok(HandlerStatus::Ok)
+            }));
+
+            // Register uart port handlers
+            for (i, uart_port) in self.uart_ports.iter().enumerate() {
+                let uart_backend_data_tx = uart_backend_handle.data_tx.clone();
+                dispatcher.register_system_port(uart_port, Box::new(move |msg, _state| {
+                    uart_backend_data_tx.send(UartTransaction::new(i, msg))?;
+
+                    Ok(HandlerStatus::Ok)
+                }));
+            }
 
             // Register gpio backend requests handler
             dispatcher.register(gpio_backend_handle.events_rx, Box::new(|req, _state| {
@@ -159,7 +207,6 @@ impl Component for QemuComponent {
                 } else {
                     logger.error(format!("GPIO line out of range: {}", line))?;
                 }
-                    
 
                 Ok(HandlerStatus::Ok)
             }));
@@ -201,6 +248,12 @@ impl Component for QemuComponent {
             dispatcher.start_dispatch(state)?;
 
             // Stop i2c backend
+            uart_backend_handle.stop_and_join();
+
+            // Stop gpio backend
+            let _ = gpio_backend_handle.join_handle.join();
+
+            // Stop i2c backend
             let _ = i2c_backend_handle.join_handle.join();
 
             Ok(())
@@ -213,32 +266,49 @@ impl Component for QemuComponent {
         // Parse config parameters
         let config = serde_json::from_value::<QemuComponentConfig>(params.config().clone())?;
 
+        let mut uart_ports = vec![SystemPort::default(); config.nuart as usize];
         let mut gpio_ports = vec![SystemPort::default(); config.ngpio as usize];
         let mut i2c_port = SystemPort::default();
 
         // Get system ports from params
         for (key, value) in &params.system_ports {
             match key.as_str() {
-                "i2c" => i2c_port = value.as_i2c()?.clone(),
+                "i2c" => {
+                    i2c_port = value.as_i2c()?.clone();
+                }
+
+                k if k.starts_with("uart") => {
+                    let idx: usize = k["uart".len()..]
+                        .parse()
+                        .map_err(|_| anyhow!("Unknown system port {} for QemuComponent", k))?;
+
+                    let uart_port = uart_ports
+                        .get_mut(idx)
+                        .ok_or_else(|| anyhow!("UART port {} out of range 0-{}", k, config.nuart))?;
+
+                    *uart_port = value.as_bytes()?.clone();
+                }
+
+                k if k.starts_with("gpio") => {
+                    let idx: usize = k["gpio".len()..]
+                        .parse()
+                        .map_err(|_| anyhow!("Unknown system port {} for QemuComponent", k))?;
+
+                    let gpio_port = gpio_ports
+                        .get_mut(idx)
+                        .ok_or_else(|| anyhow!("Gpio port {} out of range 0-{}", k, config.ngpio))?;
+
+                    *gpio_port = value.as_bool()?.clone();
+                }
+
                 _ => {
-                    if let Some(i) = key.strip_prefix("gpio") {
-                        if let Ok(idx) = i.parse::<usize>() {
-                            if let Some(gpio_port) = gpio_ports.get_mut(idx) {
-                                *gpio_port = value.as_bool()?.clone();
-                            } else {
-                                bail!("Gpio port {} out of range 0-{}", key, config.ngpio);
-                            }
-                        } else {
-                            bail!("Unknown system port {} for QemuComponent", key);
-                        }
-                    } else {
-                        bail!("Unknown system port {} for QemuComponent", key);
-                    }
-                },
+                    bail!("Unknown system port {} for QemuComponent", key);
+                }
             }
         }
 
+
         // Return the fully initialized component
-        QemuComponent::new(config, gpio_ports, i2c_port)
+        QemuComponent::new(config, uart_ports, gpio_ports, i2c_port)
     }
 }

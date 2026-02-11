@@ -617,7 +617,6 @@ impl VhostUserBackendMut for VhostUserGpioBackend {
 #[derive(Debug)]
 pub struct GpioBackendHandle {
     /// Handle of the main backend thread.
-    #[allow(dead_code)]
     pub join_handle: JoinHandle<Result<()>>,
     /// Sends gpio events to the guest.
     pub events_tx: Sender<GpioEvent>,

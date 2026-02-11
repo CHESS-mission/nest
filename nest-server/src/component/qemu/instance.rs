@@ -2,10 +2,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::thread::sleep;
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
+use crossbeam_channel::{Receiver, unbounded};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
 
 /// Custom Error type relative to QEMU.
@@ -21,10 +21,12 @@ pub enum QemuError {
     QmpConnect { path: PathBuf, source: std::io::Error },
     #[error("Timed out waiting for QMP socket to become available")]
     QmpSocketTimeout,
+    #[error("QMP socket disconnected")]
+    QmpSocketDisconnected,
     #[error("QMP negotiation failed")]
     QmpNegotiation,
     #[error("QMP response indicates an error: {0:?}")]
-    QmpResponse(Value),
+    QmpResponse(serde_json::Value),
 }
 
 type Result<T> = std::result::Result<T, QemuError>;
@@ -42,6 +44,7 @@ pub struct QemuConfig {
     pub arch: String,
     pub memory_mb: u32,
     extra_args: Vec<QemuArg>,
+    uart_sockets: Vec<PathBuf>,
     gpio_backend_socket: Option<PathBuf>,
     i2c_backend_socket: Option<PathBuf>,
     qmp_socket_path: PathBuf,
@@ -56,6 +59,7 @@ impl QemuConfig {
             arch,
             memory_mb,
             extra_args: Vec::new(),
+            uart_sockets: Vec::new(),
             gpio_backend_socket: None,
             i2c_backend_socket: None,
             qmp_socket_path,
@@ -70,6 +74,11 @@ impl QemuConfig {
     /// Add a command-line flag.
     pub fn add_flag<S: Into<String>>(&mut self, flag: S) {
         self.extra_args.push(QemuArg::Flag(flag.into()));
+    }
+
+    /// Add a socket to connect to a UART port.
+    pub fn add_uart_socket<P: Into<PathBuf>>(&mut self, socket: P) {
+        self.uart_sockets.push(socket.into());
     }
 
     /// Enable communication with the vhost-user gpio backend.
@@ -99,7 +108,15 @@ pub struct QemuInstance {
 
 impl QemuInstance {
     /// Spawn a new QEMU instance based on the provided configuration.
-    pub fn spawn(config: QemuConfig) -> Result<Self> {
+    pub fn spawn<FOut, FErr>(
+        config: QemuConfig,
+        on_stdout: FOut,
+        on_stderr: FErr,
+    ) -> Result<Self>
+    where
+        FOut: FnMut(String) + Send + 'static,
+        FErr: FnMut(String) + Send + 'static,
+    {
         // Create qemu command
         let qemu_binary = format!("qemu-system-{}", config.arch);
         let mut cmd = Command::new(qemu_binary);
@@ -125,6 +142,12 @@ impl QemuInstance {
         cmd.arg("-object").arg(mem_backend_file_arg);
         cmd.arg("-numa").arg("node,memdev=mem");
 
+        // Configure uart ports
+        for (i, socket) in config.uart_sockets.iter().enumerate() {
+            cmd.arg("-chardev").arg(format!("socket,path={},id=uart{},server=on,wait=off", socket.display(), i));
+            cmd.arg("-serial").arg(format!("chardev:uart{}", i));
+        }
+
         // Configure vhost-user gpio
         if let Some(socket) = &config.gpio_backend_socket {
             let chardev_arg = format!("socket,path={},id=vgpio", socket.display());
@@ -149,10 +172,33 @@ impl QemuInstance {
         cmd.stderr(Stdio::piped());
 
         // Spawn qemu process
-        let process = cmd.spawn().map_err(QemuError::ProcessSpawn)?;
+        let mut process = cmd.spawn().map_err(QemuError::ProcessSpawn)?;
+
+        // stdout
+        if let Some(stdout) = process.stdout.take() {
+            let mut cb = on_stdout;
+            thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines().flatten() {
+                    cb(line);
+                }
+            });
+        }
+
+        // stderr
+        if let Some(stderr) = process.stderr.take() {
+            let mut cb = on_stderr;
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().flatten() {
+                    cb(line);
+                }
+            });
+        }
 
         // Connect a QMP client to the socket
-        let qmp_client = Self::connect_qmp_client(&config.qmp_socket_path, Duration::from_secs(1))?;
+        let qmp_stream = Self::connect_stream(&config.qmp_socket_path, Duration::from_secs(1))?;
+        let qmp_client = QmpClient::connect(qmp_stream, Some(Duration::from_secs(1)))?;
 
         Ok(QemuInstance {
             process,
@@ -162,20 +208,34 @@ impl QemuInstance {
         })
     }
 
-    /// Connect the QMP client to the QEMU instance with a timeout
-    fn connect_qmp_client(socket: &Path, timeout: Duration) -> Result<QmpClient> {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            match QmpClient::connect(socket) {
-                Ok(client) => return Ok(client),
-                Err(_) => sleep(Duration::from_millis(10)),
+    /// Connect the QMP socket to a stream with a timeout
+    fn connect_stream(socket: &Path, timeout: Duration) -> Result<UnixStream> {
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            match UnixStream::connect(socket) {
+                Ok(stream) => return Ok(stream),
+                Err(err) => {
+                    // Only retry if the socket path doesn't exist yet
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        return Err(QemuError::QmpConnect {
+                            path: socket.to_path_buf(),
+                            source: err
+                        });
+                    }
+
+                    if Instant::now() >= deadline {
+                        return Err(QemuError::QmpSocketTimeout);
+                    }
+
+                    sleep(Duration::from_millis(10));
+                }
             }
         }
-        Err(QemuError::QmpSocketTimeout)
     }
 
     /// Sends a QMP command to the instance.
-    pub fn qmp_command(&mut self, command: &str, args: Option<Value>) -> Result<Value> {
+    pub fn qmp_command(&mut self, command: &str, args: Option<serde_json::Value>) -> Result<serde_json::Value> {
         self.qmp_client.execute(command, args)
     }
 
@@ -236,30 +296,28 @@ struct QmpClient {
 struct QmpCommand {
     execute: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    arguments: Option<Value>,
+    arguments: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug)]
-struct QmpResponse {
+struct QmpCommandResponse {
     #[serde(rename = "return")]
-    ret: Option<Value>,
-    error: Option<Value>,
+    ret: Option<serde_json::Value>,
+    error: Option<serde_json::Value>,
 }
 
 
 impl QmpClient {
     /// Connect to the QMP Unix socket and performs the initial capabilities negotiation.
-    fn connect(path: &Path) -> Result<Self> {
-        let stream = UnixStream::connect(path)
-            .map_err(|e| QemuError::QmpConnect { path: path.to_path_buf(), source: e })?;
+    fn connect(stream: UnixStream, timeout: Option<Duration>) -> Result<Self> {
+        stream.set_read_timeout(timeout)?;
+
         let mut client = Self {
             stream: BufReader::new(stream),
         };
 
         // QMP negotiation
-        let mut greeting = String::new();
-        client.stream.read_line(&mut greeting)?;
-        let greeting_json: Value = serde_json::from_str(&greeting)?;
+        let greeting_json = client.read_response()?;
         if greeting_json.get("QMP").is_none() {
             return Err(QemuError::QmpNegotiation);
         }
@@ -271,7 +329,7 @@ impl QmpClient {
     }
 
     /// Execute a QMP command and waits for the response.
-    fn execute(&mut self, command: &str, arguments: Option<Value>) -> Result<Value> {
+    fn execute(&mut self, command: &str, arguments: Option<serde_json::Value>) -> Result<serde_json::Value> {
         let qmp_cmd = QmpCommand {
             execute: command.to_string(),
             arguments,
@@ -280,15 +338,29 @@ impl QmpClient {
         let cmd_json = serde_json::to_string(&qmp_cmd)? + "\n";
         self.stream.get_mut().write_all(cmd_json.as_bytes())?;
 
-        let mut response_str = String::new();
-        self.stream.read_line(&mut response_str)?;
-        
-        let response: QmpResponse = serde_json::from_str(&response_str)?;
+        let response_json = self.read_response()?;
+        let response: QmpCommandResponse = serde_json::from_value(response_json)?;
 
         if let Some(err) = response.error {
             return Err(QemuError::QmpResponse(err));
         }
 
-        Ok(response.ret.unwrap_or(Value::Null))
+        Ok(response.ret.unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Wait for a response from QMP and return as JSON.
+    fn read_response(&mut self) -> Result<serde_json::Value> {
+        let mut response = String::new();
+        match self.stream.read_line(&mut response) {
+            Ok(0) => return Err(QemuError::QmpSocketDisconnected),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                return Err(QemuError::QmpSocketTimeout);
+            }
+            Err(e) => return Err(QemuError::Io(e)),
+        }
+        Ok(serde_json::from_str(&response)?)
     }
 }

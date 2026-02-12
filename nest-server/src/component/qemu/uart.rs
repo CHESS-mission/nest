@@ -110,7 +110,7 @@ fn reconnect_replace(
     Ok(Some(new_stream))
 }
 
-pub fn start_uart_backend(uart_ports: Vec<UartPort>, logger: Logger) -> Result<UartBackendHandle> {
+pub fn start_uart_backend(uart_ports: Vec<UartPort>, logger: Logger) -> UartBackendHandle {
     let (tx_to_backend, rx_to_backend) = unbounded::<UartTransaction>();
     let (tx_from_backend, rx_from_backend) = unbounded::<UartTransaction>();
 
@@ -203,11 +203,11 @@ pub fn start_uart_backend(uart_ports: Vec<UartPort>, logger: Logger) -> Result<U
         handles.push(handle);
     }
 
-    Ok(UartBackendHandle {
+    UartBackendHandle {
         data_tx: tx_to_backend,
         data_rx: rx_from_backend,
         stop,
         handles
-    })
+    }
 }
 

@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use super::{Component, ComponentHandle, ComponentHandleCommand, SystemPort};
 use crate::{
     component::{
@@ -70,7 +72,7 @@ impl TestComponent {
 }
 
 impl Component for TestComponent {
-    fn start(self: Box<Self>) -> Result<ComponentHandle> {
+    fn start(self: Box<Self>, _sim_start_time: Instant) -> Result<ComponentHandle> {
         // ComponentHandle::start creates a new handle for the provided closure and
         // takes care of spawning it as a new thread. It also passes fully initialized
         // command_receiver, logger and status instances to the closure.

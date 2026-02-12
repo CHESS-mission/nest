@@ -16,6 +16,7 @@ world nest-component {
   export init: func(options: list<tuple<string, string>>) -> result<_, init-error>;
   export on-command: func(command: string, args: string) -> result<_, command-error>;
   import emit: func(event: string, value: string);
+  import get-time: func() -> f64;
 }
 
 // Timeout extension

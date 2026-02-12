@@ -115,30 +115,32 @@ impl SimulationBuilder {
     }
 
     pub fn start_simulation(self) -> Result<Simulation> {
+        let sim_start_time = Instant::now();
         let handles = self.components
             .into_iter()
-            .map(|(name, component)| Ok((name, component.start()?)))
+            .map(|(name, component)| Ok((name, component.start(sim_start_time)?)))
             .collect::<Result<_>>()?;
 
-        Ok(Simulation::new(handles, self.environment))
+        Ok(Simulation::new(handles, self.environment, sim_start_time))
     }
 }
 
 pub struct Simulation {
     component_handles: HashMap<String, ComponentHandle>,
     environment: HashMap<String, AnySharedEnvironmentVar>,
-    started_at: Instant,
+    start_time: Instant,
 }
 
 impl Simulation {
     pub fn new(
         component_handles: HashMap<String, ComponentHandle>,
-        environment: HashMap<String, AnySharedEnvironmentVar>) -> Self
-    {
+        environment: HashMap<String, AnySharedEnvironmentVar>,
+        start_time: Instant
+    ) -> Self {
         Self {
             component_handles,
             environment,
-            started_at: Instant::now(),
+            start_time,
         }
     }
 
@@ -184,7 +186,7 @@ impl Simulation {
 
     /// Return the instant the simulation was started.
     pub fn started_at(&self) -> Instant {
-        self.started_at
+        self.start_time
     }
 }
 

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -7,9 +8,13 @@ use serde_json::json;
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
 
+use crate::component::wasm::host::nest_component::NestComponent;
+use crate::component::wasm::host::nest_component::nest::plugin::errors::{CommandError, InitError};
+use crate::component::wasm::host::timeout_ext::TimeoutExt;
 use crate::component::wasm::host::{
-    CommandError, FromWit, HostCtx, InitError, IntoWit, NestComponent,
+    FromWit, HostCtx, IntoWit,
 };
+use crate::component::wasm::timeout::start_timeout_scheduler;
 use crate::ports::AnyEnvironmentPort;
 use crate::with_env_var_wrapper;
 use crate::{
@@ -22,6 +27,7 @@ use crate::{
 };
 
 mod host;
+mod timeout;
 
 // Config
 
@@ -54,13 +60,16 @@ pub struct WasmComponent {
 impl WasmComponent {}
 
 impl Component for WasmComponent {
-    fn start(self: Box<Self>) -> Result<ComponentHandle> {
+    fn start(self: Box<Self>, sim_start_time: Instant) -> Result<ComponentHandle> {
         let handle = ComponentHandle::start(move |command_receiver, event_sender, logger, status| {
             // Initialize status
             set_status!(status.wasm, json!({
                 "module": self.config.module,
                 "ports": self.sys_ports.keys().collect::<Vec<_>>(),
             }))?;
+
+            // Start timeout scheduler
+            let timeout_scheduler_handle = start_timeout_scheduler();
 
             let mut dispatcher = MessageDispatcher::<WasmComponentState>::new();
 
@@ -96,7 +105,12 @@ impl Component for WasmComponent {
             // TODO: add URL support
             let component = wasmtime::component::Component::from_file(&engine, self.config.module)?;
 
-            let host_ctx = HostCtx::new(logger.clone(), event_sender.clone());
+            let host_ctx = HostCtx::new(
+                logger.clone(),
+                event_sender.clone(),
+                sim_start_time,
+                timeout_scheduler_handle.timeout_request_tx.clone()
+            );
             let mut store = Store::new(&engine, host_ctx);
             let mut linker = Linker::new(&engine);
 
@@ -106,6 +120,7 @@ impl Component for WasmComponent {
 
             // Add host WIT interfaces to linker
             NestComponent::add_to_linker::<HostCtx, HasSelf<_>>(&mut linker, |ctx| ctx)?;
+            TimeoutExt::add_to_linker::<HostCtx, HasSelf<_>>(&mut linker, |ctx| ctx)?;
 
             // Define system ports imports
             for (name, any_port) in &self.sys_ports {
@@ -154,6 +169,21 @@ impl Component for WasmComponent {
                 });
             }
 
+            // Register timeout handler
+            if let Ok(on_timeout) = instance.get_typed_func::<(_,), ()>(&mut store, "on-timeout") {
+                let logger = &logger;
+                dispatcher.register(timeout_scheduler_handle.timeout_rx.clone(), Box::new(move |msg, state| {
+                    if let Err(e) = on_timeout.call(&mut state.store, (msg.id,)) {
+                        logger.error(format!("Failed to call export on-timeout: {}", e))?;
+                    }
+                    if let Err(e) = on_timeout.post_return(&mut state.store) {
+                        logger.error(format!("Post return failed for on-timeout: {}", e))?;
+                    }
+
+                    Ok(HandlerStatus::Ok)
+                }));
+            }
+
             // Starting
             logger.info("Initializing component...")?;
             if let Err(error) = nest_component.call_init(&mut store, &self.config.options)? {
@@ -164,6 +194,9 @@ impl Component for WasmComponent {
             }
             logger.info("Initialization complete")?;
             dispatcher.start_dispatch(WasmComponentState { update_status: true, store, nest_component })?;
+
+            // Stop timeout scheduler
+            timeout_scheduler_handle.stop_and_join();
 
             Ok(())
         });

@@ -48,13 +48,11 @@ fn parse_topology(root: &Yaml) -> Result<TopologySpec, ParserError> {
         all_components.push(parse_component(comp)?);
     }
 
-    let wires = root["wires"]
-        .as_vec()
-        .ok_or(ParserError::MissingField("wires"))?;
-
     let mut connected_wires: Vec<WireSpec> = Vec::new();
-    for wire in wires {
-        connected_wires.push(parse_wire_endpoints(wire)?);
+    if let Some(wires) = root["wires"].as_vec() {
+        for wire in wires {
+            connected_wires.push(parse_wire_endpoints(wire)?);
+        }
     }
 
     Ok(TopologySpec::new(
@@ -177,20 +175,16 @@ fn parse_system_port(sys_port: &Yaml) -> Result<SystemPortSpec, ParserError> {
 fn parse_wire_endpoints(wire: &Yaml) -> Result<WireSpec, ParserError> {
     let mut curr_wire: Vec<WireEndpointSpec> = Vec::new();
 
-    // a topology without wire endpoints make little sense
-    // though it might be preferable to just throw a warning
-    let endpoints = wire
-        .as_vec()
-        .ok_or(ParserError::ValidationError("wires cannot be empty"))?;
-
-    for endpoint in endpoints {
-        let component = endpoint["component"]
-            .as_str()
-            .ok_or(ParserError::MissingField("wires.component"))?;
-        let port = endpoint["port"]
-            .as_str()
-            .ok_or(ParserError::MissingField("wires.port"))?;
-        curr_wire.push(WireEndpointSpec::new(component, port))
+    if let Some(endpoints) = wire.as_vec() {
+        for endpoint in endpoints {
+            let component = endpoint["component"]
+                .as_str()
+                .ok_or(ParserError::MissingField("wires.component"))?;
+            let port = endpoint["port"]
+                .as_str()
+                .ok_or(ParserError::MissingField("wires.port"))?;
+            curr_wire.push(WireEndpointSpec::new(component, port))
+        }
     }
 
     Ok(WireSpec::new(curr_wire))

@@ -3,7 +3,7 @@ mod uart;
 mod gpio;
 mod i2c;
 
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::{Duration, Instant}};
 
 use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result, bail};
@@ -93,7 +93,7 @@ impl QemuComponent {
 }
 
 impl Component for QemuComponent {
-    fn start(self: Box<Self>) -> Result<ComponentHandle> {
+    fn start(self: Box<Self>, _sim_start_time: Instant) -> Result<ComponentHandle> {
         let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, _status| {
             // Create uart port sockets
             let uart_ports: Vec<UartPort> = (0..self.config.nuart).map(|i| {
@@ -103,7 +103,7 @@ impl Component for QemuComponent {
             }).map(UartPort::new).collect();
 
             // Start uart backend
-            let uart_backend_handle = start_uart_backend(uart_ports.clone(), logger.clone())?;
+            let uart_backend_handle = start_uart_backend(uart_ports.clone(), logger.clone());
 
             // Create gpio socket
             let gpio_socket = self.config.gpio_socket.as_ref().map(PathBuf::from).unwrap_or_else(||

@@ -1,58 +1,111 @@
+use std::time::Instant;
+
 use crossbeam_channel::Sender;
 use ndarray::IxDyn;
-use wasmtime::component::*;
 
 use crate::{
     component::{
         ComponentEvent, Logger,
-        wasm::host::nest::plugin::types::{
-            Bytes, I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction, Quaternion, Tensor, Vec2, Vec3
+        wasm::{
+            host::nest_component::nest::plugin::types::{
+                Bytes, I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction,
+                Quaternion, Tensor, Vec2, Vec3,
+            },
+            timeout::TimeoutRequest,
         },
     },
-    ports::{
-        BoolMessage, BytesMessage, FloatMessage, I2cMessage, IntMessage, TextMessage
-    },
-    environment::{
-        QuaternionVar, TensorVar, Vec2Var, Vec3Var
-    }
+    environment::{QuaternionVar, TensorVar, Vec2Var, Vec3Var},
+    ports::{BoolMessage, BytesMessage, FloatMessage, I2cMessage, IntMessage, TextMessage},
 };
-
-bindgen!("nest-component" in "src/component/wasm/wit");
 
 pub struct HostCtx {
     logger: Logger,
     sender: Sender<ComponentEvent>,
+    sim_start_time: Instant,
+    timeout_request_tx: Sender<TimeoutRequest>,
+    next_timer_id: u32,
 }
 
 impl HostCtx {
-    pub fn new(logger: Logger, sender: Sender<ComponentEvent>) -> Self {
-        Self { logger, sender }
+    pub fn new(
+        logger: Logger,
+        sender: Sender<ComponentEvent>,
+        sim_start_time: Instant,
+        timeout_request_tx: Sender<TimeoutRequest>,
+    ) -> Self {
+        Self { logger, sender, sim_start_time, timeout_request_tx, next_timer_id: 0 }
     }
 }
 
-impl nest::plugin::types::Host for HostCtx {}
-impl nest::plugin::errors::Host for HostCtx {}
+pub mod nest_component {
+    use std::time::Instant;
 
-impl nest::plugin::log::Host for HostCtx {
-    fn info(&mut self, msg: String) -> () {
-        let _ = self.logger.info(msg);
+    use wasmtime::component::*;
+
+    use crate::component::{
+        ComponentEvent,
+        wasm::host::HostCtx,
+    };
+
+    bindgen!("nest-component" in "src/component/wasm/wit");
+
+    impl nest::plugin::types::Host for HostCtx {}
+    impl nest::plugin::errors::Host for HostCtx {}
+
+    impl nest::plugin::log::Host for HostCtx {
+        fn info(&mut self, msg: String) -> () {
+            let _ = self.logger.info(msg);
+        }
+
+        fn warning(&mut self, msg: String) -> () {
+            let _ = self.logger.warning(msg);
+        }
+
+        fn error(&mut self, msg: String) -> () {
+            let _ = self.logger.error(msg);
+        }
     }
 
-    fn warning(&mut self, msg: String) -> () {
-        let _ = self.logger.warning(msg);
+    impl NestComponentImports for HostCtx {
+        fn emit(&mut self, event: String, value: String) -> () {
+            if let Ok(value) = serde_json::from_str(&value) {
+                let _ = self.sender.send(ComponentEvent::SimulationEvent { event, value });
+            } else {
+                let _ = self.sender.send(ComponentEvent::Error(format!("Received invalid JSON for event {}: {}", event, value)));
+            }
+        }
+
+        fn get_time(&mut self) -> f64 {
+            Instant::now()
+                .duration_since(self.sim_start_time)
+                .as_secs_f64()
+        }
     }
 
-    fn error(&mut self, msg: String) -> () {
-        let _ = self.logger.error(msg);
-    }
 }
 
-impl NestComponentImports for HostCtx {
-    fn emit(&mut self, event: String, value: String) -> () {
-        if let Ok(value) = serde_json::from_str(&value) {
-            let _ = self.sender.send(ComponentEvent::SimulationEvent { event, value });
-        } else {
-            let _ = self.sender.send(ComponentEvent::Error(format!("Received invalid JSON for event {}: {}", event, value)));
+pub mod timeout_ext {
+    use std::time::{Duration, Instant};
+
+    use wasmtime::component::*;
+
+    use crate::component::wasm::{host::HostCtx, timeout::TimeoutRequest};
+
+    bindgen!("timeout-ext" in "src/component/wasm/wit");
+
+    impl TimeoutExtImports for HostCtx {
+        fn set_timer(&mut self, duration_ms: u32) -> TimerId {
+            let id = self.next_timer_id;
+            self.next_timer_id += 1;
+
+            let deadline = Instant::now() + Duration::from_millis(duration_ms as u64);
+
+            let _ = self.timeout_request_tx.send(TimeoutRequest::SetTimer {
+                id,
+                deadline,
+            });
+
+            id
         }
     }
 }
@@ -217,4 +270,3 @@ impl FromWit<Tensor> for TensorVar {
             .expect("invalid shape/data length in Tensor")
     }
 }
-

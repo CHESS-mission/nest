@@ -24,7 +24,7 @@ pub trait Component: Send {
     /// Start executing the component on a new thread.
     ///
     /// Return a [ComponentHandle] with a handle to the spawned thread.
-    fn start(self: Box<Self>) -> Result<ComponentHandle>;
+    fn start(self: Box<Self>, sim_start_time: Instant) -> Result<ComponentHandle>;
 
     /// Creates a new instance of the component from a [ComponentParams].
     /// The method should return an error if invalid parameter are passed.

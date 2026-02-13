@@ -213,7 +213,7 @@ impl Component for TestComponent {
         Ok(handle)
     }
 
-    fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
+    fn from_params(params: ComponentParams) -> Result<Self> where Self: Sized {
         let mut test_component = Self::default();
 
         // Parse config parameters into a TestComponentConfig

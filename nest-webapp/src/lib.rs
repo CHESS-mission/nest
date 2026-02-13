@@ -138,9 +138,9 @@ fn HomePage() -> impl IntoView {
                     logging::log!("A");
                     match event {
                         NestApiUpdate::Status(update)=>set_simulator_state.set(update.into()),
-                        NestApiUpdate::Event(event_update) => todo!(),
+                        NestApiUpdate::Event(_event_update) => todo!(),
                         NestApiUpdate::Log(log)=>logs.update(|logs|logs.push(log)),
-                        NestApiUpdate::Error(error_update) => todo!(),
+                        NestApiUpdate::Error(_error_update) => todo!(),
                     }
                 } else {
                     logging::log!("B");

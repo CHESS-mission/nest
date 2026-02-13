@@ -262,7 +262,7 @@ impl Component for QemuComponent {
         Ok(handle)
     }
 
-    fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
+    fn from_params(params: ComponentParams) -> Result<Self> where Self: Sized {
         // Parse config parameters
         let config = serde_json::from_value::<QemuComponentConfig>(params.config().clone())?;
 

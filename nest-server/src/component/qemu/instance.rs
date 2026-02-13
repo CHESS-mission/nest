@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
-use crossbeam_channel::{Receiver, unbounded};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

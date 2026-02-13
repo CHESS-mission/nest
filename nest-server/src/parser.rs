@@ -254,6 +254,7 @@ impl FromStr for ComponentTypeSpec {
         Ok(match s.to_lowercase().trim() {
             "qemu" => ComponentTypeSpec::Qemu,
             "wasm" => ComponentTypeSpec::Wasm,
+            "mux" => ComponentTypeSpec::Mux,
             _ => return Err(ParserError::InvalidType("Unknown component type")),
         })
     }

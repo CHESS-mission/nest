@@ -166,6 +166,7 @@ pub struct ComponentDTO {
 pub enum ComponentTypeDTO {
     Qemu,
     Wasm,
+    Mux,
 }
 
 #[derive(Clone, Debug)]

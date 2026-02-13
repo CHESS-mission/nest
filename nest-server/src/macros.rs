@@ -159,42 +159,70 @@ macro_rules! with_env_var_wrapper {
 #[macro_export]
 macro_rules! impl_as_into_methods {
     ($enum_name:ident, $wrapper:ident, $variant:ident, $msg:ty, $method_as:ident, $method_as_mut:ident, $method_into:ident) => {
-        #[doc = concat!("Return a reference to the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
-                        "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
-        pub fn $method_as(&self) -> Result<&$wrapper<$msg>> {
-            match self {
-                $enum_name::$variant(wrapper) => Ok(wrapper),
-                _ => Err(anyhow!(
-                    "Can't convert {} into {}",
-                    stringify!($enum_name::$variant),
-                    stringify!($wrapper<$msg>)
-                )),
+        impl $enum_name {
+            #[doc = concat!("Return a reference to the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
+                            "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
+            #[allow(private_interfaces, private_bounds)]
+            pub fn $method_as(&self) -> Result<&$wrapper<$msg>> {
+                match self {
+                    $enum_name::$variant(wrapper) => Ok(wrapper),
+                    _ => Err(anyhow!(
+                        "Can't convert {} into {}",
+                        stringify!($enum_name::$variant),
+                        stringify!($wrapper<$msg>)
+                    )),
+                }
+            }
+
+            #[doc = concat!("Return a mutable reference to the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
+                            "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
+            #[allow(private_interfaces, private_bounds)]
+            pub fn $method_as_mut(&mut self) -> Result<&mut $wrapper<$msg>> {
+                match self {
+                    $enum_name::$variant(wrapper) => Ok(wrapper),
+                    _ => Err(anyhow!(
+                        "Can't convert {} into {}",
+                        stringify!($enum_name::$variant),
+                        stringify!($wrapper<$msg>)
+                    )),
+                }
+            }
+
+            #[doc = concat!("Convert into the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
+                            "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
+            #[allow(private_interfaces, private_bounds)]
+            pub fn $method_into(self) -> Result<$wrapper<$msg>> {
+                match self {
+                    $enum_name::$variant(wrapper) => Ok(wrapper),
+                    _ => Err(anyhow!(
+                        "Can't convert {} into {}",
+                        stringify!($enum_name::$variant),
+                        stringify!($wrapper<$msg>)
+                    )),
+                }
             }
         }
 
-        #[doc = concat!("Return a mutable reference to the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
-                        "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
-        pub fn $method_as_mut(&mut self) -> Result<&mut $wrapper<$msg>> {
-            match self {
-                $enum_name::$variant(wrapper) => Ok(wrapper),
-                _ => Err(anyhow!(
-                    "Can't convert {} into {}",
-                    stringify!($enum_name::$variant),
-                    stringify!($wrapper<$msg>)
-                )),
+        // Automatically implement From to erase type
+        impl ::core::convert::From<$wrapper<$msg>> for $enum_name {
+            fn from(wrapper: $wrapper<$msg>) -> Self {
+                $enum_name::$variant(wrapper)
             }
         }
 
-        #[doc = concat!("Convert into the underlying [`", stringify!($wrapper), "<", stringify!($msg), ">`].\n\n",
-                        "Fails if not a [`", stringify!($enum_name), "::", stringify!($variant), "`].")]
-        pub fn $method_into(self) -> Result<$wrapper<$msg>> {
-            match self {
-                $enum_name::$variant(wrapper) => Ok(wrapper),
-                _ => Err(anyhow!(
-                    "Can't convert {} into {}",
-                    stringify!($enum_name::$variant),
-                    stringify!($wrapper<$msg>)
-                )),
+        // Automatically implement TryFrom to restore type
+        impl ::core::convert::TryFrom<$enum_name> for $wrapper<$msg> {
+            type Error = anyhow::Error;
+
+            fn try_from(value: $enum_name) -> Result<Self, Self::Error> {
+                match value {
+                    $enum_name::$variant(wrapper) => Ok(wrapper),
+                    _ => Err(anyhow!(
+                        "Can't convert {} into {}",
+                        stringify!($enum_name::$variant),
+                        stringify!($wrapper<$msg>)
+                    )),
+                }
             }
         }
     };
@@ -207,6 +235,7 @@ macro_rules! any_message_enum {
         #[doc = concat!("A generic wrapper around [", stringify!($wrapper), "] to erase the underlying message type.\n\n",
                         "Useful when working with heterogeneous [", stringify!($wrapper), "] collections, ",
                         "but not efficient since it requires looking up the underlying type for most operations.")]
+        #[allow(private_interfaces, private_bounds)]
         #[derive(Clone, Debug)]
         pub enum $enum_name {
             Int($wrapper<$crate::ports::IntMessage>),
@@ -217,14 +246,12 @@ macro_rules! any_message_enum {
             I2c($wrapper<$crate::ports::I2cMessage>),
         }
 
-        impl $enum_name {
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Int, $crate::ports::IntMessage, as_int, as_int_mut, into_int);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Float, $crate::ports::FloatMessage, as_float, as_float_mut, into_float);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Bool, $crate::ports::BoolMessage, as_bool, as_bool_mut, into_bool);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Bytes, $crate::ports::BytesMessage, as_bytes, as_bytes_mut, into_bytes);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Text, $crate::ports::TextMessage, as_text, as_text_mut, into_text);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, I2c, $crate::ports::I2cMessage, as_i2c, as_i2c_mut, into_i2c);
-        }
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Int, $crate::ports::IntMessage, as_int, as_int_mut, into_int);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Float, $crate::ports::FloatMessage, as_float, as_float_mut, into_float);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Bool, $crate::ports::BoolMessage, as_bool, as_bool_mut, into_bool);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Bytes, $crate::ports::BytesMessage, as_bytes, as_bytes_mut, into_bytes);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Text, $crate::ports::TextMessage, as_text, as_text_mut, into_text);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, I2c, $crate::ports::I2cMessage, as_i2c, as_i2c_mut, into_i2c);
     };
 }
 
@@ -246,14 +273,12 @@ macro_rules! any_env_var_enum {
             Tensor($wrapper<$crate::environment::TensorVar>),
         }
 
-        impl $enum_name {
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Int, $crate::environment::IntVar, as_int, as_int_mut, into_int);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Float, $crate::environment::FloatVar, as_float, as_float_mut, into_float);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Bool, $crate::environment::BoolVar, as_bool, as_bool_mut, into_bool);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Vec2, $crate::environment::Vec2Var, as_vec2, as_vec2_mut, into_vec2);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Vec3, $crate::environment::Vec3Var, as_vec3, as_vec3_mut, into_vec3);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Quaternion, $crate::environment::QuaternionVar, as_quaternion, as_quaternion_mut, into_quaternion);
-            $crate::impl_as_into_methods!($enum_name, $wrapper, Tensor, $crate::environment::TensorVar, as_tensor, as_tensor_mut, into_tensor);
-        }
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Int, $crate::environment::IntVar, as_int, as_int_mut, into_int);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Float, $crate::environment::FloatVar, as_float, as_float_mut, into_float);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Bool, $crate::environment::BoolVar, as_bool, as_bool_mut, into_bool);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Vec2, $crate::environment::Vec2Var, as_vec2, as_vec2_mut, into_vec2);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Vec3, $crate::environment::Vec3Var, as_vec3, as_vec3_mut, into_vec3);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Quaternion, $crate::environment::QuaternionVar, as_quaternion, as_quaternion_mut, into_quaternion);
+        $crate::impl_as_into_methods!($enum_name, $wrapper, Tensor, $crate::environment::TensorVar, as_tensor, as_tensor_mut, into_tensor);
     };
 }

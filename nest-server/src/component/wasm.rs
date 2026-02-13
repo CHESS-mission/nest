@@ -204,7 +204,7 @@ impl Component for WasmComponent {
         Ok(handle)
     }
 
-    fn from_params(params: &ComponentParams) -> Result<Self> where Self: Sized {
+    fn from_params(params: ComponentParams) -> Result<Self> where Self: Sized {
         let mut comp = Self::default();
 
         // Parse config parameters into a TestComponentConfig

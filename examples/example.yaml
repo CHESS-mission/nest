@@ -3,7 +3,7 @@ environment_variables:
     type: vec3
 
 components:
-  - name: QEMU
+  - name: QEMU1
     type: qemu
     config:
       arch: arm
@@ -40,6 +40,8 @@ components:
       system:
         - name: i2c
           type: i2c
+        - name: gpio0
+          type: bool
         - name: uart0
           type: bytes
         - name: uart1
@@ -72,6 +74,7 @@ components:
           value: pty,path=/tmp/qemu-serial-pty2,id=char0
         - option: device
           value: virtconsole,chardev=char0
+      i2c_timeout_ms: 20
       nuart: 1
     ports:
       system:
@@ -93,14 +96,48 @@ components:
           variable: B_field
           type: vec3
 
+  - name: MUX
+    type: mux
+    config:
+      multiplexed_ports:
+        - common: i2c
+          channels:
+            - i2c1
+            - i2c2
+    ports:
+      system:
+        - name: select
+          type: bool
+        - name: i2c
+          type: i2c
+        - name: i2c1
+          type: i2c
+        - name: i2c2
+          type: i2c
+
 wires:
   - 
-    - component: QEMU
-      port: i2c
-    - component: MMC5983MA
-      port: i2c
-  - 
-    - component: QEMU
+    - component: QEMU1
       port: uart1
     - component: QEMU2
       port: uart0
+  - 
+    - component: MMC5983MA
+      port: i2c
+    - component: MUX
+      port: i2c
+  - 
+    - component: MUX
+      port: i2c1
+    - component: QEMU1
+      port: i2c
+  - 
+    - component: MUX
+      port: i2c2
+    - component: QEMU2
+      port: i2c
+  - 
+    - component: QEMU1
+      port: gpio0
+    - component: MUX
+      port: select

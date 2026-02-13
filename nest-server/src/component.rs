@@ -1,6 +1,7 @@
-pub mod wasm;
+pub mod mux;
 pub mod qemu;
 pub mod test;
+pub mod wasm;
 
 use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Instant};
 
@@ -28,7 +29,7 @@ pub trait Component: Send {
 
     /// Creates a new instance of the component from a [ComponentParams].
     /// The method should return an error if invalid parameter are passed.
-    fn from_params(params: &ComponentParams) -> Result<Self>
+    fn from_params(params: ComponentParams) -> Result<Self>
     where
         Self: Sized;
 }

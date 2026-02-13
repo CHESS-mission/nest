@@ -95,6 +95,7 @@ impl Into<ComponentDTO> for ComponentSpec {
 pub enum ComponentTypeSpec {
     Qemu,
     Wasm,
+    Mux,
 }
 
 impl Into<ComponentTypeDTO> for ComponentTypeSpec {
@@ -102,6 +103,7 @@ impl Into<ComponentTypeDTO> for ComponentTypeSpec {
         match self {
             ComponentTypeSpec::Qemu => ComponentTypeDTO::Qemu,
             ComponentTypeSpec::Wasm => ComponentTypeDTO::Wasm,
+            ComponentTypeSpec::Mux => ComponentTypeDTO::Mux,
         }
     }
 }

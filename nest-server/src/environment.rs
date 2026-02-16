@@ -1,4 +1,4 @@
-use std::{mem, sync::{Arc, RwLock}, time::{Instant, Duration}};
+use std::{convert::Infallible, mem, sync::{Arc, RwLock}, time::{Duration, Instant}};
 
 use nalgebra::{UnitQuaternion, Vector2, Vector3};
 use ndarray::ArrayD;
@@ -11,6 +11,14 @@ use crate::any_env_var_enum;
 pub enum EnvVarError {
     #[error("incorrect type for environment variable {0}: expected {1}, received {2}")]
     ApiTypeMismatch(String, String, String),
+    #[error("invalid tensor shape: {0}")]
+    TensorShape(#[from] ndarray::ShapeError),
+}
+
+impl From<Infallible> for EnvVarError {
+    fn from(_: Infallible) -> Self {
+        unreachable!("Infallible env var conversion failed")
+    }
 }
 
 
@@ -174,7 +182,8 @@ impl AnySharedEnvironmentVar {
     pub fn set_from_api(&self, set_env: SetEnvAction) -> Result<(), EnvVarError> {
         macro_rules! convert {
             ($var:expr, $expected:literal, $variant:ident) => {
-                if let nest_api::EnvVarValue::$variant(val) = set_env.value {
+                if let nest_api::EnvVarValue::$variant(api_val) = set_env.value {
+                    let val = api_val.try_into()?;
                     let mut var = $var.write().unwrap();
                     if let Some(duration_s) = set_env.lerp_over_s {
                         var.set_next(val, Instant::now() + Duration::from_secs_f32(duration_s));

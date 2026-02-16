@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 use nest_server::{

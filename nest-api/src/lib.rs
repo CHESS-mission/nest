@@ -32,6 +32,7 @@ pub struct CommandAction {
 #[derive(Serialize, Deserialize)]
 pub struct SetEnvAction {
     pub variable: String,
+    #[serde(flatten)]
     pub value: EnvVarValue,
     #[serde(default)]
     pub lerp_over_s: Option<f32>,
@@ -44,10 +45,10 @@ pub enum EnvVarValue {
     Int(i32),
     Float(f32),
     Bool(bool),
-    Vec2(nalgebra::Vector2<f32>),
-    Vec3(nalgebra::Vector3<f32>),
-    Quaternion(nalgebra::UnitQuaternion<f32>),
-    Tensor(ndarray::ArrayD<f32>),
+    Vec2(ApiVec2),
+    Vec3(ApiVec3),
+    Quaternion(ApiQuaternion),
+    Tensor(ApiTensor),
 }
 
 // Useful for error messages in case of type mismatch
@@ -62,6 +63,96 @@ impl EnvVarValue {
             Self::Quaternion(_) => "quaternion",
             Self::Tensor(_) => "tensor",
         }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApiVec2 {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl From<nalgebra::Vector2<f32>> for ApiVec2 {
+    fn from(v: nalgebra::Vector2<f32>) -> Self {
+        Self { x: v.x, y: v.y }
+    }
+}
+
+impl From<ApiVec2> for nalgebra::Vector2<f32> {
+    fn from(v: ApiVec2) -> Self {
+        nalgebra::Vector2::new(v.x, v.y)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApiVec3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl From<nalgebra::Vector3<f32>> for ApiVec3 {
+    fn from(v: nalgebra::Vector3<f32>) -> Self {
+        Self { x: v.x, y: v.y, z: v.z }
+    }
+}
+
+impl From<ApiVec3> for nalgebra::Vector3<f32> {
+    fn from(v: ApiVec3) -> Self {
+        nalgebra::Vector3::new(v.x, v.y, v.z)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApiQuaternion {
+    pub w: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl From<nalgebra::UnitQuaternion<f32>> for ApiQuaternion {
+    fn from(q: nalgebra::UnitQuaternion<f32>) -> Self {
+        let q = q.quaternion();
+        Self {
+            w: q.w,
+            x: q.i,
+            y: q.j,
+            z: q.k,
+        }
+    }
+}
+
+impl From<ApiQuaternion> for nalgebra::UnitQuaternion<f32> {
+    fn from(q: ApiQuaternion) -> Self {
+        nalgebra::UnitQuaternion::from_quaternion(
+            nalgebra::Quaternion::new(q.w, q.x, q.y, q.z),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApiTensor {
+    pub shape: Vec<usize>,
+
+    /// Data is stored in logical order (the rightmost index is varying the fastest).
+    pub data: Vec<f32>,
+}
+
+impl From<ndarray::ArrayD<f32>> for ApiTensor {
+    fn from(arr: ndarray::ArrayD<f32>) -> Self {
+        Self {
+            shape: arr.shape().to_vec(),
+            data: arr.into_iter().collect(),
+        }
+    }
+}
+
+impl TryFrom<ApiTensor> for ndarray::ArrayD<f32> {
+    type Error = ndarray::ShapeError;
+
+    fn try_from(t: ApiTensor) -> Result<Self, Self::Error> {
+        ndarray::ArrayD::from_shape_vec(t.shape, t.data)
     }
 }
 

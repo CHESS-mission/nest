@@ -93,16 +93,22 @@ impl UpdateBroadcaster {
         let event_join = tokio::task::spawn_blocking(move || {
             while !event_cancel.is_cancelled() {
                 match sim_event_receiver.recv() {
-                    Some((source, ComponentEvent::SimulationEvent { event, value })) => {
+                    Some((source, ComponentEvent::SimulationEvent { timestamp, event, value })) => {
                         event_tx.send(NestApiUpdate::Event(EventUpdate {
+                            timestamp: timestamp
+                                .duration_since(sim_started_at)
+                                .as_secs_f64(),
                             component: source,
                             event: event,
                             data: value,
                         })).ok();
                     }
-                    Some((source, ComponentEvent::Error(message))) => {
+                    Some((source, ComponentEvent::Error { timestamp, message })) => {
                         tracing::error!(component = %source, "Component error ({}): {}", source, message);
                         event_tx.send(NestApiUpdate::Error(ErrorUpdate {
+                            timestamp: timestamp
+                                .duration_since(sim_started_at)
+                                .as_secs_f64(),
                             component: source,
                             message
                         })).ok();

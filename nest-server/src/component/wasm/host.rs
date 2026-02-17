@@ -68,10 +68,10 @@ pub mod nest_component {
 
     impl NestComponentImports for HostCtx {
         fn emit(&mut self, event: String, value: String) -> () {
-            if let Ok(value) = serde_json::from_str(&value) {
-                let _ = self.sender.send(ComponentEvent::SimulationEvent { event, value });
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&value) {
+                let _ = self.sender.send(ComponentEvent::sim_event(event, value));
             } else {
-                let _ = self.sender.send(ComponentEvent::Error(format!("Received invalid JSON for event {}: {}", event, value)));
+                let _ = self.sender.send(ComponentEvent::error(format!("Received invalid JSON for event {}: {}", event, value)));
             }
         }
 

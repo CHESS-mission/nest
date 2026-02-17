@@ -305,7 +305,7 @@ impl ComponentHandle {
         let status_clone = status.clone();
         let handle = thread::spawn(move || {
             if let Err(e) = f(command_rx, event_tx.clone(), Logger::new(log_tx), status_clone) {
-                event_tx.send(ComponentEvent::Error(e.to_string()))?;
+                event_tx.send(ComponentEvent::error(e.to_string()))?;
             }
             Ok(())
         });
@@ -399,15 +399,18 @@ impl ComponentHandleCommand {
 pub enum ComponentEvent {
     /// Signals an unrecoverable error to the component handle. The component is expected to
     /// immediately stop after sending a [ComponentEvent::Error].
-    Error(String),
+    Error { timestamp: Instant, message: String },
     /// Reports a simulation event to the simulator.
-    SimulationEvent { event: String, value: serde_json::Value },
+    SimulationEvent { timestamp: Instant, event: String, value: serde_json::Value },
 }
 
 impl ComponentEvent {
     /// Create a new [ComponentEvent::Error].
     pub fn error<E: Into<String>>(error: E) -> Self {
-        Self::Error(error.into())
+        Self::Error {
+            timestamp: Instant::now(),
+            message: error.into(),
+        }
     }
 
     /// Create a new [ComponentEvent::SimulationEvent].
@@ -417,6 +420,7 @@ impl ComponentEvent {
         V: Into<Value>,
     {
         Self::SimulationEvent {
+            timestamp: Instant::now(),
             event: event.into(),
             value: value.into(),
         }

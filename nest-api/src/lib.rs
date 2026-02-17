@@ -194,6 +194,7 @@ pub struct RunningStatusUpdate {
 #[derive(Clone, Debug)]
 #[derive(Serialize, Deserialize)]
 pub struct EventUpdate {
+    pub timestamp: f64,
     pub component: String,
     pub event: String,
     pub data: serde_json::Value,
@@ -211,6 +212,7 @@ pub struct LogUpdate {
 #[derive(Clone, Debug)]
 #[derive(Serialize, Deserialize)]
 pub struct ErrorUpdate {
+    pub timestamp: f64,
     pub component: String,
     pub message: String,
 }

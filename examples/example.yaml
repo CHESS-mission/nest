@@ -31,7 +31,7 @@ components:
         - option: device
           value: virtconsole,chardev=char0
       i2c_timeout_ms: 10
-      ngpio: 8
+      ngpio: 16
       gpio_names: 
         5: echo_out
         7: echo_in 
@@ -118,7 +118,7 @@ components:
 wires:
   - 
     - component: QEMU1
-      port: uart1
+      port: uart0
     - component: QEMU2
       port: uart0
   - 

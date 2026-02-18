@@ -29,6 +29,7 @@
             tailwindcss_4
             nodePackages.nodejs
             llvmPackages.clang
+            libguestfs-with-appliance
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
           ];
           LIBCLANG_PATH = lib.makeLibraryPath [ pkgs.llvmPackages_16.libclang ];

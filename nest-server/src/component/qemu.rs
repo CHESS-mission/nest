@@ -5,12 +5,13 @@ mod i2c;
 
 use std::{collections::HashMap, path::PathBuf, time::{Duration, Instant}};
 
+use crossbeam_channel::Sender;
 use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result, bail};
 
 use crate::{
     component::{
-        Component, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, MessageDispatcher, qemu::{
+        Component, ComponentEvent, ComponentHandle, ComponentHandleCommand, ComponentParams, HandlerStatus, Logger, MessageDispatcher, qemu::{
             gpio::{GpioLine, messaging::GpioEvent, start_gpio_backend}, i2c::start_i2c_backend, instance::{QemuConfig, QemuInstance}, uart::{UartPort, UartTransaction, start_uart_backend}
         }
     },
@@ -94,7 +95,7 @@ impl QemuComponent {
 
 impl Component for QemuComponent {
     fn start(self: Box<Self>, _sim_start_time: Instant) -> Result<ComponentHandle> {
-        let handle = ComponentHandle::start(move |command_receiver, _event_sender, logger, _status| {
+        let handle = ComponentHandle::start(move |command_receiver, event_sender, logger, _status| {
             // Create uart port sockets
             let uart_ports: Vec<UartPort> = (0..self.config.nuart).map(|i| {
                 self.config.uart_sockets.get(&i.to_string()).map(PathBuf::from).unwrap_or_else(||
@@ -166,8 +167,11 @@ impl Component for QemuComponent {
                     },
                     ComponentHandleCommand::StartStatusUpdates => state.update_status = true,
                     ComponentHandleCommand::StopStatusUpdates => state.update_status = false,
-                    ComponentHandleCommand::SimulatorCommand { command: _command, args: _args } => {
-                        todo!();
+                    ComponentHandleCommand::SimulatorCommand { command, args } => {
+                        match command.as_str() {
+                            "qmp_command" => handle_qmp_command(state, args, &event_sender, &logger)?,
+                            unknown => logger.error(format!("Unknown command: {}", unknown))?,
+                        }
                     }
                 }
 
@@ -311,4 +315,40 @@ impl Component for QemuComponent {
         // Return the fully initialized component
         QemuComponent::new(config, uart_ports, gpio_ports, i2c_port)
     }
+}
+
+fn handle_qmp_command(
+    state: &mut QemuComponentState,
+    args: serde_json::Value,
+    event_sender: &Sender<ComponentEvent>,
+    logger: &Logger,
+) -> Result<()> {
+    #[derive(Deserialize)]
+    struct QmpCommand {
+        execute: String,
+        #[serde(default)]
+        arguments: Option<serde_json::Value>,
+    }
+
+    let qmp_command: QmpCommand = match serde_json::from_value(args) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            logger.error(format!("Invalid qmp_command arguments: {}", e))?;
+            return Ok(());
+        }
+    };
+
+    let response = match state
+        .qemu_instance
+        .qmp_command(&qmp_command.execute, qmp_command.arguments)
+    {
+        Ok(r) => r,
+        Err(e) => {
+            logger.error(format!("Qmp command failed: {}", e))?;
+            return Ok(());
+        }
+    };
+
+    event_sender.send(ComponentEvent::sim_event("qmp_response", response))?;
+    Ok(())
 }

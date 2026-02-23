@@ -26,6 +26,8 @@ pub enum QemuError {
     QmpNegotiation,
     #[error("QMP response indicates an error: {0:?}")]
     QmpResponse(serde_json::Value),
+    #[error("QMP response must containt an id")]
+    QmpResponseNoID,
 }
 
 type Result<T> = std::result::Result<T, QemuError>;
@@ -289,6 +291,7 @@ impl Drop for QemuInstance {
 /// A client for interacting with a QEMU instance via QMP.
 struct QmpClient {
     stream: BufReader<UnixStream>,
+    next_id: u64,
 }
 
 #[derive(Serialize)]
@@ -296,6 +299,7 @@ struct QmpCommand {
     execute: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     arguments: Option<serde_json::Value>,
+    id: u64,
 }
 
 #[derive(Deserialize, Debug)]
@@ -313,6 +317,7 @@ impl QmpClient {
 
         let mut client = Self {
             stream: BufReader::new(stream),
+            next_id: 0,
         };
 
         // QMP negotiation
@@ -329,16 +334,19 @@ impl QmpClient {
 
     /// Execute a QMP command and waits for the response.
     fn execute(&mut self, command: &str, arguments: Option<serde_json::Value>) -> Result<serde_json::Value> {
+        let id = self.next_id;
+        self.next_id += 1;
+
         let qmp_cmd = QmpCommand {
             execute: command.to_string(),
             arguments,
+            id,
         };
 
         let cmd_json = serde_json::to_string(&qmp_cmd)? + "\n";
         self.stream.get_mut().write_all(cmd_json.as_bytes())?;
 
-        let response_json = self.read_response()?;
-        let response: QmpCommandResponse = serde_json::from_value(response_json)?;
+        let response = self.read_cmd_response(id)?;
 
         if let Some(err) = response.error {
             return Err(QemuError::QmpResponse(err));
@@ -361,5 +369,29 @@ impl QmpClient {
             Err(e) => return Err(QemuError::Io(e)),
         }
         Ok(serde_json::from_str(&response)?)
+    }
+
+    /// Wait for a command response from QMP with matching ID.
+    fn read_cmd_response(&mut self, expected_id: u64) -> Result<QmpCommandResponse> {
+        loop {
+            let value = self.read_response()?;
+
+            // Ignore async events
+            if value.get("event").is_some() {
+                continue;
+            }
+
+            // Must contain an id
+            let id = value.get("id")
+                .and_then(|v| v.as_u64())
+                .ok_or(QemuError::QmpResponseNoID)?;
+
+            // Ignore non-matching IDs
+            if id != expected_id {
+                continue;
+            }
+
+            return Ok(serde_json::from_value(value)?);
+        }
     }
 }

@@ -94,14 +94,16 @@ impl UpdateBroadcaster {
             while !event_cancel.is_cancelled() {
                 match sim_event_receiver.recv() {
                     Some((source, ComponentEvent::SimulationEvent { timestamp, event, value })) => {
-                        event_tx.send(NestApiUpdate::Event(EventUpdate {
+                        let event_update = EventUpdate {
                             timestamp: timestamp
                                 .duration_since(sim_started_at)
                                 .as_secs_f64(),
                             component: source,
                             event: event,
                             data: value,
-                        })).ok();
+                        };
+                        tracing::debug!("broadcasting event: {:?}", event_update);
+                        event_tx.send(NestApiUpdate::Event(event_update)).ok();
                     }
                     Some((source, ComponentEvent::Error { timestamp, message })) => {
                         tracing::error!(component = %source, "Component error ({}): {}", source, message);

@@ -1,5 +1,5 @@
 use nest_api::{LogLevelDTO, LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO, UploadTopologyAction};
-use leptos::{html::{Div, Input}, logging, prelude::*, server::codee::string::FromToStringCodec};
+use leptos::{html::{Div, Input}, prelude::*, server::codee::string::FromToStringCodec};
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
@@ -133,17 +133,13 @@ fn HomePage() -> impl IntoView {
     Effect::new(move |_| {
         message.with(move |message| {
             if let Some(message) = message {
-                logging::log!("{}", message);
                 if let Ok(event) = serde_json::from_str(&message) {
-                    logging::log!("A");
                     match event {
                         NestApiUpdate::Status(update)=>set_simulator_state.set(update.into()),
-                        NestApiUpdate::Event(_event_update) => todo!(),
+                        NestApiUpdate::Event(_event_update) => (), // TODO
                         NestApiUpdate::Log(log)=>logs.update(|logs|logs.push(log)),
-                        NestApiUpdate::Error(_error_update) => todo!(),
+                        NestApiUpdate::Error(_error_update) => (), // TODO
                     }
-                } else {
-                    logging::log!("B");
                 }
             }
         })

@@ -1,3 +1,4 @@
+pub mod fuzzer;
 pub mod mux;
 pub mod qemu;
 pub mod test;

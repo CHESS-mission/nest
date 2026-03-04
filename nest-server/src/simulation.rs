@@ -5,7 +5,7 @@ use crossbeam_channel::{Receiver, Select, TryRecvError};
 
 use crate::{
     component::{
-        Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, mux::MuxComponent, qemu::QemuComponent, wasm::WasmComponent, fuzzer::FuzzerComponent,
+        Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, mux::MuxComponent, qemu::QemuComponent, wasm::WasmComponent
     },
     environment::{AnySharedEnvironmentVar, SharedEnvironmentVar},
     parser::specs::{ComponentTypeSpec, EnvPortTypeSpec, PortTypeSpec, TopologySpec},
@@ -108,7 +108,6 @@ impl SimulationBuilder {
                 ComponentTypeSpec::Qemu => { components.insert(comp.name.clone(), Box::new(QemuComponent::from_params(params)?)); },
                 ComponentTypeSpec::Wasm => { components.insert(comp.name.clone(), Box::new(WasmComponent::from_params(params)?)); },
                 ComponentTypeSpec::Mux  => { components.insert(comp.name.clone(), Box::new(MuxComponent::from_params(params)?)); },
-                ComponentTypeSpec::Fuzzer => { components.insert(comp.name.clone(), Box::new(FuzzerComponent::from_params(params)?)); },
             }
         }
 

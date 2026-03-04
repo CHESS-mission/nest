@@ -96,7 +96,6 @@ pub enum ComponentTypeSpec {
     Qemu,
     Wasm,
     Mux,
-    Fuzzer,
 }
 
 impl Into<ComponentTypeDTO> for ComponentTypeSpec {
@@ -105,7 +104,6 @@ impl Into<ComponentTypeDTO> for ComponentTypeSpec {
             ComponentTypeSpec::Qemu => ComponentTypeDTO::Qemu,
             ComponentTypeSpec::Wasm => ComponentTypeDTO::Wasm,
             ComponentTypeSpec::Mux => ComponentTypeDTO::Mux,
-            ComponentTypeSpec::Fuzzer => ComponentTypeDTO::Fuzzer,
         }
     }
 }

@@ -1,3 +1,6 @@
+mod engine;
+
+use std::collections::HashMap;
 use std::time::Instant;
 
 use anyhow::{anyhow, bail, Result};
@@ -9,6 +12,8 @@ use crate::component::{
 };
 use crate::ports::{AnySystemPort, SystemPort};
 use crate::{any_message_enum, with_message_wrapper};
+
+use engine::{Direction, FuzzEngine, FuzzProfile};
 
 // Config
 
@@ -25,27 +30,26 @@ struct FuzzedGroupSpec {
     name: String,
     syst_side: String,
     comp_side: String,
+    #[serde(default)]
+    comp_to_syst: FuzzProfile,
+    #[serde(default)]
+    syst_to_comp: FuzzProfile,
+    seed: Option<u64>,
 }
 
 // State
 
 struct FuzzerState {
-    /// Current select value
-    fuzzing_select: bool,
+    /// One FuzzEngine per group, keyed by group name.
+    engines: HashMap<String, FuzzEngine>,
 }
 
-impl Default for FuzzerState {
-    fn default() -> Self {
-        FuzzerState {
-            fuzzing_select: false,
-        }
-    }
-}
 // Component
 
 #[derive(Default)]
 pub struct FuzzerComponent {
     fuzzed_ports: Vec<AnyFuzzedGroup>,
+    initial_engines: Vec<FuzzEngine>,
 }
 
 #[derive(Clone, Debug)]
@@ -71,10 +75,17 @@ impl Component for FuzzerComponent {
     fn start(self: Box<Self>, _sim_start_time: Instant) -> Result<ComponentHandle> {
         let handle =
             ComponentHandle::start(move |command_receiver, event_sender, logger, _status| {
+                // Build initial state from the engines created in from_params
+                let engines: HashMap<String, FuzzEngine> = self
+                    .initial_engines
+                    .into_iter()
+                    .map(|e| (e.name.clone(), e))
+                    .collect();
+
                 // Create dispatcher
                 let mut dispatcher = MessageDispatcher::<FuzzerState>::new();
 
-                // Basic commands
+                // Basic commands + simulator commands
                 dispatcher.register(
                     command_receiver,
                     Box::new(|msg, state| {
@@ -88,17 +99,87 @@ impl Component for FuzzerComponent {
                             ComponentHandleCommand::SimulatorCommand { command, args } => {
                                 let args_string = args.to_string();
                                 let result = match command.as_str() {
-                                    "set_fuzzing_select" => {
-                                        if let Ok(fuzzing_select) =
-                                            serde_json::from_value::<bool>(args)
-                                        {
-                                            state.fuzzing_select = fuzzing_select;
-                                            Ok(())
-                                        } else {
-                                            Err(format!(
-                                                "Bad arguments for simulator command {}: {}",
-                                                command, args_string
-                                            ))
+                                    // ------------------------------------------------
+                                    // set_profile { group, direction, ...profile }
+                                    // ------------------------------------------------
+                                    "set_profile" => {
+                                        #[derive(Deserialize)]
+                                        struct SetProfileArgs {
+                                            group: String,
+                                            direction: String,
+                                            #[serde(flatten)]
+                                            profile: FuzzProfile,
+                                        }
+                                        match serde_json::from_value::<SetProfileArgs>(args) {
+                                            Ok(a) => {
+                                                if let Some(engine) =
+                                                    state.engines.get_mut(&a.group)
+                                                {
+                                                    match a.direction.as_str() {
+                                                        "comp_to_syst" => {
+                                                            engine.comp_to_syst = a.profile;
+                                                        }
+                                                        "syst_to_comp" => {
+                                                            engine.syst_to_comp = a.profile;
+                                                        }
+                                                        "both" => {
+                                                            engine.comp_to_syst = a.profile.clone();
+                                                            engine.syst_to_comp = a.profile;
+                                                        }
+                                                        _ => {
+                                                            return Ok(HandlerStatus::Ok);
+                                                        }
+                                                    }
+                                                    Ok(())
+                                                } else {
+                                                    Err(format!("Unknown fuzz group: {}", a.group))
+                                                }
+                                            }
+                                            Err(e) => {
+                                                Err(format!("Bad arguments for {}: {}", command, e))
+                                            }
+                                        }
+                                    }
+                                    // ------------------------------------------------
+                                    // set_enabled { group, direction, enabled }
+                                    // ------------------------------------------------
+                                    "set_enabled" => {
+                                        #[derive(Deserialize)]
+                                        struct SetEnabledArgs {
+                                            group: String,
+                                            direction: String,
+                                            enabled: bool,
+                                        }
+                                        match serde_json::from_value::<SetEnabledArgs>(args) {
+                                            Ok(a) => {
+                                                if let Some(engine) =
+                                                    state.engines.get_mut(&a.group)
+                                                {
+                                                    let dirs: Vec<Direction> =
+                                                        match a.direction.as_str() {
+                                                            "comp_to_syst" => {
+                                                                vec![Direction::CompToSyst]
+                                                            }
+                                                            "syst_to_comp" => {
+                                                                vec![Direction::SystToComp]
+                                                            }
+                                                            "both" => vec![
+                                                                Direction::CompToSyst,
+                                                                Direction::SystToComp,
+                                                            ],
+                                                            _ => vec![],
+                                                        };
+                                                    for dir in dirs {
+                                                        engine.profile_mut(dir).enabled = a.enabled;
+                                                    }
+                                                    Ok(())
+                                                } else {
+                                                    Err(format!("Unknown fuzz group: {}", a.group))
+                                                }
+                                            }
+                                            Err(e) => {
+                                                Err(format!("Bad arguments for {}: {}", command, e))
+                                            }
                                         }
                                     }
                                     _ => Err(format!("Unknown simulator command: {}", command)),
@@ -112,7 +193,8 @@ impl Component for FuzzerComponent {
                                     Err(err) => logger.error(&err)?,
                                 };
                             }
-                        }
+                        };
+
                         Ok(HandlerStatus::Ok)
                     }),
                 );
@@ -120,27 +202,38 @@ impl Component for FuzzerComponent {
                 // Register routing handlers
                 for group in &self.fuzzed_ports {
                     with_message_wrapper!(AnyFuzzedGroup, group, |group| {
+                        let group_name = group.name.clone();
                         let syst_port = &group.syst_side;
 
                         // Man-in-the-middle routing
                         if let Some(comp_port) = &group.comp_side {
-                            // Register comp->syst port handlers
+                            // comp -> syst
+                            let name = group_name.clone();
                             dispatcher.register_system_port(
                                 comp_port,
                                 Box::new(move |msg, state| {
-                                    if !state.fuzzing_select {
-                                        syst_port.send(msg.clone());
+                                    if let Some(engine) = state.engines.get_mut(&name) {
+                                        if let Some(msg) =
+                                            engine.process(msg, Direction::CompToSyst)
+                                        {
+                                            syst_port.send(msg);
+                                        }
                                     }
                                     Ok(HandlerStatus::Ok)
                                 }),
                             );
 
-                            // Register syst->comp port handlers
+                            // syst -> comp
+                            let name = group_name;
                             dispatcher.register_system_port(
                                 syst_port,
                                 Box::new(move |msg, state| {
-                                    if !state.fuzzing_select {
-                                        comp_port.send(msg.clone());
+                                    if let Some(engine) = state.engines.get_mut(&name) {
+                                        if let Some(msg) =
+                                            engine.process(msg, Direction::SystToComp)
+                                        {
+                                            comp_port.send(msg);
+                                        }
                                     }
                                     Ok(HandlerStatus::Ok)
                                 }),
@@ -153,9 +246,7 @@ impl Component for FuzzerComponent {
                 }
 
                 // Start dispatch
-                dispatcher.start_dispatch(FuzzerState {
-                    fuzzing_select: false,
-                })?;
+                dispatcher.start_dispatch(FuzzerState { engines })?;
 
                 // event_sender is unused; keep it so the signature matches your framework
                 let _ = event_sender;
@@ -174,7 +265,7 @@ impl Component for FuzzerComponent {
         let config = serde_json::from_value::<FuzzerConfig>(params.config().clone())?;
 
         for group in &config.fuzzed_ports {
-            if group.syst_side.len() == 0 {
+            if group.syst_side.is_empty() {
                 bail!(
                     "Fuzzed group {} must have at least one system-side port",
                     group.name
@@ -197,6 +288,14 @@ impl Component for FuzzerComponent {
                     comp.fuzzed_ports
                         .push(FuzzedGroup::new(group.name.clone(), syst_port, comp_port).into());
                 });
+
+                // Build the FuzzEngine for this group
+                comp.initial_engines.push(FuzzEngine::new(
+                    group.name.clone(),
+                    group.comp_to_syst.clone(),
+                    group.syst_to_comp.clone(),
+                    group.seed,
+                ));
             } else {
                 // Remove comp port if no syst port for this group
                 params.system_ports.remove(&group.comp_side);

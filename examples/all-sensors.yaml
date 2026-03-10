@@ -1,0 +1,108 @@
+environment_variables:
+  - name: temp
+    type: float
+  - name: accel
+    type: vec3
+  - name: omega
+    type: vec3
+  - name: B_field
+    type: vec3
+
+components:
+  - name: QEMU
+    type: qemu
+    config:
+      arch: arm
+      mem_mb: 1024
+      options: 
+        - option: cpu
+          value: cortex-a7
+        - option: M
+          value: virt
+        - option: kernel
+          value: ./image-copy/zImage 
+        - option: append
+          value: rootwait root=/dev/vda console=hvc0
+        - option: drive
+          value: if=none,file=./image-copy/disk.qcow2,id=hd0 
+        - option: device
+          value: virtio-blk-device,drive=hd0 
+        - option: nographic 
+
+        # Use virtual console to leave UART ports available
+        - option: device
+          value: virtio-serial
+        - option: chardev
+          value: pty,path=/tmp/qemu-serial-pty,id=char0
+        - option: device
+          value: virtconsole,chardev=char0
+      i2c_timeout_ms: 10
+      ngpio: 16
+      nuart: 2
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+        - name: gpio13
+          type: bool
+        - name: uart0
+          type: bytes
+        - name: uart1
+          type: bytes
+
+  - name: PCT2075
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "72"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: IIM-42652
+    type: wasm
+    config:
+      module: component_artifacts/iim42652.wasm
+      options:
+        - ["i2cAddress", "0x68"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: acceleration
+          variable: accel
+          type: vec3
+        - name: angular-velocity
+          variable: omega
+          type: vec3
+
+  - name: MMC5983MA
+    type: wasm
+    config:
+      module: component_artifacts/mmc5983ma.wasm
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: mag-field
+          variable: B_field
+          type: vec3
+
+wires:
+  - 
+    - component: QEMU
+      port: i2c
+    - component: PCT2075
+      port: i2c
+    - component: IIM-42652
+      port: i2c
+    - component: MMC5983MA
+      port: i2c

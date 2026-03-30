@@ -178,6 +178,9 @@ impl NestServer {
         // Leptos routes
         let routes = generate_route_list(App);
 
+        // Create a shutdown signal channel
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
         let app = Router::new()
             .route("/ws", any(ws_handler))
             .leptos_routes_with_context(&state, routes,
@@ -191,12 +194,41 @@ impl NestServer {
                 },
             )
             .fallback(leptos_axum::file_and_error_handler::<NestServerState, _>(shell))
-            .with_state(state);
+            .with_state(state.clone());
 
         tracing::info!(addr = %self.addr, "listening on http://{}", self.addr);
         let listener = tokio::net::TcpListener::bind(&self.addr).await?;
-        axum::serve(listener, app).await?;
+        
+        let server = axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            });
 
+        // Wait for either server to finish or shutdown signal
+        tokio::select! {
+            result = server => {
+                result?;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received Ctrl-C signal");
+                let _ = shutdown_tx.send(());
+            }
+        }
+
+        // Perform graceful shutdown of components
+        if let Ok(mut broadcaster_guard) = state.update_broadcaster.try_lock() {
+            if let Some(broadcaster) = broadcaster_guard.take() {
+                tracing::info!("Stopping update broadcaster");
+                broadcaster.stop().await;
+            }
+        }
+
+        if let Ok(mut sim_guard) = state.simulator.try_lock() {
+            tracing::info!("Stopping simulation");
+            let _ = sim_guard.stop();
+        }
+
+        tracing::info!("Server shutdown complete");
         Ok(())
     }
 }

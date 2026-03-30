@@ -27,9 +27,9 @@ use vmm_sys_util::{
     eventfd::{EFD_NONBLOCK, EventFd},
 };
 
-use crate::{component::qemu::i2c::virtio::{
-        I2cDescriptorChain, VirtioI2cInHdr, VirtioI2cOutHdr, VIRTIO_I2C_FLAGS_M_RD, VIRTIO_I2C_F_ZERO_LENGTH_REQUEST, VIRTIO_I2C_MSG_ERR, VIRTIO_I2C_MSG_OK
-    }, ports::{I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction}};
+use crate::{component::{Logger, qemu::i2c::virtio::{
+        I2cDescriptorChain, VIRTIO_I2C_F_ZERO_LENGTH_REQUEST, VIRTIO_I2C_FLAGS_M_RD, VIRTIO_I2C_MSG_ERR, VIRTIO_I2C_MSG_OK, VirtioI2cInHdr, VirtioI2cOutHdr
+    }}, ports::{I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction}};
 
 /// Custom Error type relative to the vhost device i2c backend.
 #[derive(Error, Debug)]
@@ -350,25 +350,30 @@ pub struct I2cBackendHandle {
 }
 
 /// Start the vhost-user i2c backend daemon.
-pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration) -> I2cBackendHandle {
+pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration, logger: Logger) -> I2cBackendHandle {
     let i2c_socket = i2c_socket.as_ref().to_owned();
     let (request_tx, request_rx) = unbounded();
     let (response_tx, response_rx) = unbounded();
 
     let join_handle = spawn(move || {
-        let backend = Arc::new(RwLock::new(
-            VhostUserI2cBackend::new(request_tx, response_rx, timeout)?,
-        ));
+        (|| {
+            let backend = Arc::new(RwLock::new(
+                VhostUserI2cBackend::new(request_tx, response_rx, timeout)?,
+            ));
 
-        let mut daemon = VhostUserDaemon::new(
-            String::from("nest-vhost-i2c-backend"),
-            backend.clone(),
-            GuestMemoryAtomic::new(GuestMemoryMmap::new()),
-        ).map_err(|_| I2cError::StartBackendFailed)?;
+            let mut daemon = VhostUserDaemon::new(
+                String::from("nest-vhost-i2c-backend"),
+                backend.clone(),
+                GuestMemoryAtomic::new(GuestMemoryMmap::new()),
+            ).map_err(|_| I2cError::StartBackendFailed)?;
 
-        daemon.serve(i2c_socket).map_err(|_| I2cError::StartBackendFailed)?;
+            daemon.serve(i2c_socket).map_err(|_| I2cError::StartBackendFailed)?;
 
-        Ok(())
+            Ok(())
+        })()
+        .inspect_err(|e: &I2cError| {
+            let _ = logger.error(format!("UartBackend error: {}", e.to_string()));
+        })
     });
 
     I2cBackendHandle {

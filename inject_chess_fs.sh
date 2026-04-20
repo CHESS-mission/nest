@@ -22,13 +22,24 @@ fi
 
 echo "Injecting $BINARY into $IMAGE..."
 
-# Run guestfish with automatic mounting (-i)
-# We use 'nix shell' to ensure guestfish is available
-nix shell nixpkgs#libguestfs-with-appliance --command guestfish -a "$IMAGE" -i <<EOF
+# Run guestfish with automatic mounting (-i).
+# If guestfish is already in PATH (i.e. we are inside the nix devShell) use it
+# directly — avoids downloading a second copy of libguestfs-with-appliance.
+# Otherwise fall back to 'nix shell' for standalone usage.
+if command -v guestfish &>/dev/null; then
+    guestfish -a "$IMAGE" -i <<EOF
 mkdir-p "$TARGET_DIR"
 upload "$BINARY" "$TARGET_FILE"
 chmod 0755 "$TARGET_FILE"
 echo "Successfully injected to $TARGET_FILE"
 EOF
+else
+    nix shell nixpkgs#libguestfs-with-appliance --command guestfish -a "$IMAGE" -i <<EOF
+mkdir-p "$TARGET_DIR"
+upload "$BINARY" "$TARGET_FILE"
+chmod 0755 "$TARGET_FILE"
+echo "Successfully injected to $TARGET_FILE"
+EOF
+fi
 
 echo "Done."

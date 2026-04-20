@@ -37,7 +37,7 @@ use vmm_sys_util::{
     eventfd::{EFD_NONBLOCK, EventFd},
 };
 
-use crate::component::qemu::gpio::{messaging::*, virtio::*};
+use crate::component::{Logger, qemu::gpio::{messaging::*, virtio::*}};
 
 type Result<T> = std::result::Result<T, GpioError>;
 
@@ -625,25 +625,30 @@ pub struct GpioBackendHandle {
 }
 
 /// Start the vhost-user GPIO backend daemon.
-pub fn start_gpio_backend<P: AsRef<Path>>(gpio_socket: P, gpio_lines: Vec<GpioLine>) -> GpioBackendHandle {
+pub fn start_gpio_backend<P: AsRef<Path>>(gpio_socket: P, gpio_lines: Vec<GpioLine>, logger: Logger) -> GpioBackendHandle {
     let gpio_socket = gpio_socket.as_ref().to_owned();
     let (backend_events_tx, device_events_rx) = unbounded();
     let (device_events_tx, backend_events_rx) = unbounded();
 
     let join_handle = spawn(move || {
-        let backend = Arc::new(RwLock::new(
-            VhostUserGpioBackend::new(backend_events_tx, backend_events_rx, gpio_lines)?
-        ));
+        (|| {
+            let backend = Arc::new(RwLock::new(
+                VhostUserGpioBackend::new(backend_events_tx, backend_events_rx, gpio_lines)?
+            ));
 
-        let mut daemon = VhostUserDaemon::new(
-            String::from("nest-vhost-gpio-backend"),
-            backend.clone(),
-            GuestMemoryAtomic::new(GuestMemoryMmap::new()),
-        ).map_err(|_| GpioError::StartBackendFailed)?;
+            let mut daemon = VhostUserDaemon::new(
+                String::from("nest-vhost-gpio-backend"),
+                backend.clone(),
+                GuestMemoryAtomic::new(GuestMemoryMmap::new()),
+            ).map_err(|_| GpioError::StartBackendFailed)?;
 
-        daemon.serve(gpio_socket).map_err(|_| GpioError::StartBackendFailed)?;
+            daemon.serve(gpio_socket).map_err(|_| GpioError::StartBackendFailed)?;
 
-        Ok(())
+            Ok(())
+        })()
+        .inspect_err(|e: &GpioError| {
+            let _ = logger.error(format!("UartBackend error: {}", e.to_string()));
+        })
     });
 
     GpioBackendHandle {

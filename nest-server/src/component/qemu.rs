@@ -112,7 +112,7 @@ impl Component for QemuComponent {
             );
 
             // Start gpio backend
-            let gpio_backend_handle = start_gpio_backend(&gpio_socket, self.gpio_lines);
+            let gpio_backend_handle = start_gpio_backend(&gpio_socket, self.gpio_lines, logger.clone());
 
             // Create i2c socket
             let i2c_socket = self.config.i2c_socket.as_ref().map(PathBuf::from).unwrap_or_else(||
@@ -120,7 +120,7 @@ impl Component for QemuComponent {
             );
 
             // Start i2c backend
-            let i2c_backend_handle = start_i2c_backend(&i2c_socket, Duration::from_millis(self.config.i2c_timeout_ms));
+            let i2c_backend_handle = start_i2c_backend(&i2c_socket, Duration::from_millis(self.config.i2c_timeout_ms), logger.clone());
 
             // Configure qemu instance
             let mut qemu_config = QemuConfig::new(self.config.arch, self.config.mem_mb);

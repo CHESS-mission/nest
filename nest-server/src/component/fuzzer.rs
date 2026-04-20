@@ -116,7 +116,6 @@ impl Component for FuzzerComponent {
                     Box::new(move |msg, state| {
                         match msg {
                             ComponentHandleCommand::Stop => {
-                                cmd_logger.info("Stopping fuzzer component")?;
                                 return Ok(HandlerStatus::Stop);
                             }
                             ComponentHandleCommand::StartStatusUpdates => {}
@@ -136,10 +135,16 @@ impl Component for FuzzerComponent {
                                         }
                                         match serde_json::from_value::<Args>(args) {
                                             Ok(a) => {
-                                                if let Some(engine) =
+                                                let directions = parse_directions(&a.direction);
+                                                if directions.is_empty() {
+                                                    Err(format!(
+                                                        "Invalid direction '{}' for group '{}' (expected comp_to_syst|syst_to_comp|both)",
+                                                        a.direction, a.group
+                                                    ))
+                                                } else if let Some(engine) =
                                                     state.engines.get_mut(&a.group)
                                                 {
-                                                    for dir in parse_directions(&a.direction) {
+                                                    for dir in directions {
                                                         engine.profile_mut(dir).enabled = a.enabled;
                                                     }
                                                     Ok(())
@@ -147,7 +152,8 @@ impl Component for FuzzerComponent {
                                                     Err(format!("Unknown fuzz group: {}", a.group))
                                                 }
                                             }
-                                            Err(e) => Err(format!("Bad arguments: {}", e)),
+
+                                            Err(e) => Err(format!("Bad arguments for set_enabled: {}", e)),
                                         }
                                     }
                                     // ------------------------------------------------
@@ -268,7 +274,16 @@ impl Component for FuzzerComponent {
                                         "Received simulator command: {} {}",
                                         command, args_string
                                     ))?,
-                                    Err(err) => cmd_logger.error(&err)?,
+                                    Err(err) => {
+                                        tracing::error!(
+                                            component = "fuzzer",
+                                            command = %command,
+                                            args = %args_string,
+                                            error = %err,
+                                            "Simulator command failed"
+                                        );
+                                        cmd_logger.error(err)?;
+                                    }
                                 };
                             }
                         };

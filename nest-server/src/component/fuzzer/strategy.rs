@@ -12,6 +12,8 @@ pub enum MutationResult {
     Passed,
     /// The message was mutated. Contains a description of the mutation.
     Mutated(String),
+    /// The message was consumed by a buffering strategy and should not be forwarded yet.
+    Buffered(String),
     /// The message was dropped.
     Dropped,
 }
@@ -19,8 +21,8 @@ pub enum MutationResult {
 /// A composable fuzzing strategy that can be applied to messages in the pipeline.
 ///
 /// Strategies are applied sequentially: each strategy receives the (possibly already mutated)
-/// message from the previous strategy. If any strategy returns `Dropped`, the pipeline
-/// short-circuits.
+/// message from the previous strategy. If any strategy returns `Dropped` or `Buffered`,
+/// the pipeline short-circuits.
 ///
 /// The default implementations of `apply_bytes` and `apply_i2c` return `Passed` (no-op).
 /// Concrete strategies override the methods relevant to the message types they handle.
@@ -80,6 +82,7 @@ pub fn strategy_from_config(value: &Value) -> anyhow::Result<Box<dyn FuzzStrateg
     match strategy_type {
         "drop" => Ok(Box::new(super::strategies::DropStrategy::from_config(value)?)),
         "bitflip" => Ok(Box::new(super::strategies::BitFlipStrategy::from_config(value)?)),
+        "chips_frame" => Ok(Box::new(super::strategies::ChipsFrameStrategy::from_config(value)?)),
         "noise" => Ok(Box::new(super::strategies::NoiseStrategy::from_config(value)?)),
         "i2c_address" => Ok(Box::new(super::strategies::I2cAddressStrategy::from_config(value)?)),
         "i2c_op_flip" => Ok(Box::new(super::strategies::I2cOpFlipStrategy::from_config(value)?)),

@@ -312,6 +312,13 @@ impl Component for FuzzerComponent {
                                             let (result, logs) =
                                                 engine.process_bytes(msg, Direction::CompToSyst);
                                             for entry in logs {
+                                                tracing::debug!(
+                                                    component = "fuzzer",
+                                                    group = %name,
+                                                    direction = "comp->syst",
+                                                    "{}",
+                                                    entry
+                                                );
                                                 log.info(format!(
                                                     "[{}] comp->syst: {}",
                                                     name, entry
@@ -335,6 +342,13 @@ impl Component for FuzzerComponent {
                                             let (result, logs) =
                                                 engine.process_bytes(msg, Direction::SystToComp);
                                             for entry in logs {
+                                                tracing::debug!(
+                                                    component = "fuzzer",
+                                                    group = %name,
+                                                    direction = "syst->comp",
+                                                    "{}",
+                                                    entry
+                                                );
                                                 log.info(format!(
                                                     "[{}] syst->comp: {}",
                                                     name, entry
@@ -364,6 +378,13 @@ impl Component for FuzzerComponent {
                                             let (result, logs) =
                                                 engine.process_i2c(msg, Direction::CompToSyst);
                                             for entry in logs {
+                                                tracing::debug!(
+                                                    component = "fuzzer",
+                                                    group = %name,
+                                                    direction = "comp->syst",
+                                                    "{}",
+                                                    entry
+                                                );
                                                 log.info(format!(
                                                     "[{}] comp->syst: {}",
                                                     name, entry
@@ -387,6 +408,13 @@ impl Component for FuzzerComponent {
                                             let (result, logs) =
                                                 engine.process_i2c(msg, Direction::SystToComp);
                                             for entry in logs {
+                                                tracing::debug!(
+                                                    component = "fuzzer",
+                                                    group = %name,
+                                                    direction = "syst->comp",
+                                                    "{}",
+                                                    entry
+                                                );
                                                 log.info(format!(
                                                     "[{}] syst->comp: {}",
                                                     name, entry
@@ -418,6 +446,13 @@ impl Component for FuzzerComponent {
                                                 let (result, logs) = engine
                                                     .process_generic(msg, Direction::CompToSyst);
                                                 for entry in logs {
+                                                    tracing::debug!(
+                                                        component = "fuzzer",
+                                                        group = %name,
+                                                        direction = "comp->syst",
+                                                        "{}",
+                                                        entry
+                                                    );
                                                     log.info(format!(
                                                         "[{}] comp->syst: {}",
                                                         name, entry
@@ -441,6 +476,13 @@ impl Component for FuzzerComponent {
                                                 let (result, logs) = engine
                                                     .process_generic(msg, Direction::SystToComp);
                                                 for entry in logs {
+                                                    tracing::debug!(
+                                                        component = "fuzzer",
+                                                        group = %name,
+                                                        direction = "syst->comp",
+                                                        "{}",
+                                                        entry
+                                                    );
                                                     log.info(format!(
                                                         "[{}] syst->comp: {}",
                                                         name, entry

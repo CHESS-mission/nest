@@ -114,6 +114,10 @@ impl FuzzEngine {
                 MutationResult::Mutated(desc) => {
                     log_entries.push(format!("[{}] {}", strategy.name(), desc));
                 }
+                MutationResult::Buffered(desc) => {
+                    log_entries.push(format!("[{}] buffered: {}", strategy.name(), desc));
+                    return (None, log_entries);
+                }
                 MutationResult::Dropped => {
                     log_entries.push(format!("[{}] dropped", strategy.name()));
                     return (None, log_entries);
@@ -144,6 +148,10 @@ impl FuzzEngine {
                 MutationResult::Passed => {}
                 MutationResult::Mutated(desc) => {
                     log_entries.push(format!("[{}] {}", strategy.name(), desc));
+                }
+                MutationResult::Buffered(desc) => {
+                    log_entries.push(format!("[{}] buffered: {}", strategy.name(), desc));
+                    return (None, log_entries);
                 }
                 MutationResult::Dropped => {
                     log_entries.push(format!("[{}] dropped", strategy.name()));

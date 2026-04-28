@@ -1,4 +1,5 @@
 pub mod bitflip;
+pub mod chips_frame;
 pub mod drop;
 pub mod i2c_address;
 pub mod i2c_op;
@@ -8,6 +9,7 @@ pub mod i2c_response;
 pub mod noise;
 
 pub use bitflip::BitFlipStrategy;
+pub use chips_frame::ChipsFrameStrategy;
 pub use drop::DropStrategy;
 pub use i2c_address::I2cAddressStrategy;
 pub use i2c_op::I2cOpFlipStrategy;

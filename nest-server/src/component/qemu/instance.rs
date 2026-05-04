@@ -197,9 +197,10 @@ impl QemuInstance {
             });
         }
 
-        // Connect a QMP client to the socket
-        let qmp_stream = Self::connect_stream(&config.qmp_socket_path, Duration::from_secs(1))?;
-        let qmp_client = QmpClient::connect(qmp_stream, Some(Duration::from_secs(1)))?;
+        // Connect a QMP client to the socket — allow 30 s for QEMU to start
+        // inside Docker where filesystem and process startup latency is higher.
+        let qmp_stream = Self::connect_stream(&config.qmp_socket_path, Duration::from_secs(30))?;
+        let qmp_client = QmpClient::connect(qmp_stream, Some(Duration::from_secs(5)))?;
 
         Ok(QemuInstance {
             process,

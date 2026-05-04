@@ -148,9 +148,16 @@ impl Component for QemuComponent {
             let qemu_stderr_logger = logger.clone();
             let qemu_instance = QemuInstance::spawn(
                 qemu_config,
-                move |line| { let _ = qemu_stdout_logger.info(format!("Qemu stdout: {}", line)); }, 
-                move |line| { let _ = qemu_stderr_logger.error(format!("Qemu stderr: {}", line)); }, 
+                move |line| {
+                    tracing::debug!(target: "qemu_stdout", "{}", line);
+                    let _ = qemu_stdout_logger.info(format!("Qemu stdout: {}", line));
+                },
+                move |line| {
+                    tracing::warn!(target: "qemu_stderr", "{}", line);
+                    let _ = qemu_stderr_logger.error(format!("Qemu stderr: {}", line));
+                },
             )?;
+            tracing::info!(target: "qemu", cmd = %qemu_instance.cmd_line(), "Spawned QEMU instance");
             logger.info(format!("Spawned QEMU instance: {}", qemu_instance.cmd_line()))?;
 
             let mut dispatcher = MessageDispatcher::<QemuComponentState>::new();

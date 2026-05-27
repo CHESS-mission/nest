@@ -1,2 +1,6 @@
 target/
 .sass-cache/
+
+# Plugin build outputs
+plugins/*.so
+plugins/*.o

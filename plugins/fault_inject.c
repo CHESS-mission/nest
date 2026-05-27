@@ -1,9 +1,9 @@
 /*
- * fault_inject.c — QEMU TCG Plugin: SEU (Single Event Upset) Fault Injection
+ * fault_inject.c QEMU TCG Plugin: SEU (Single Event Upset) Fault Injection
  *
  * Injects bit-flip faults into guest virtual memory at a configurable
  * instruction-count offset. Because the plugin callback runs *inside* the
- * vCPU thread (not halting it), the guest clock never pauses — so FPrime's
+ * vCPU thread (not halting it), the guest clock never pauses so FPrime's
  * Svc::Health time-drift watchdog is not triggered. This is the key
  * difference from a GDB breakpoint approach.
  *
@@ -16,7 +16,7 @@
  *   therefore only performs the READ here; it records the injection as
  *   "needs_gdb_write" in last_result so that the Python controller can write
  *   the flipped byte via QEMU's GDB Remote Serial Protocol stub (port 1234).
- *   The GDB halt is <1 ms — below FPrime's health watchdog threshold.
+ *   The GDB halt is <1 ms below FPrime's health watchdog threshold.
  *
  * ── Plugin arguments (comma-separated after the .so path) ───────────────────
  *   socket=<path>   Unix socket for runtime control     (REQUIRED)
@@ -28,22 +28,22 @@
  * ── Control socket protocol (line-delimited JSON, one request per connect) ──
  *
  *   Schedule a memory bit-flip:
- *     → {"cmd":"inject_mem","addr":<uint64>,"bit":<0-7>,"delay":<uint64>}
+ *     -> {"cmd":"inject_mem","addr":<uint64>,"bit":<0-7>,"delay":<uint64>}
  *        addr  : guest virtual address (decimal or 0x-prefixed hex)
  *        bit   : bit index within the byte at addr (0 = LSB)
  *        delay : instruction count from *now* after which to inject
  *     ← {"status":"ok","trigger_insn":<uint64>}
  *
  *   Query current instruction count:
- *     → {"cmd":"get_count"}
+ *     -> {"cmd":"get_count"}
  *     ← {"status":"ok","insn_count":<uint64>,"pending":<bool>}
  *
  *   Cancel pending injection:
- *     → {"cmd":"clear"}
+ *     -> {"cmd":"clear"}
  *     ← {"status":"ok"}
  *
  *   Get last injection result:
- *     → {"cmd":"last_result"}
+ *     -> {"cmd":"last_result"}
  *     ← {"status":"ok","injected":<bool>,"addr":<uint64>,"bit":<int>,
  *         "original":<uint8>,"flipped":<uint8>,"insn_count":<uint64>}
  *
@@ -95,12 +95,12 @@ typedef int (*cpu_memory_rw_debug_fn)(void *cpu, uint64_t addr,
                                       void *buf, size_t len, bool is_write);
 static cpu_memory_rw_debug_fn g_cpu_rw_debug = NULL;
 
-/* qemu_get_cpu(index) → CPUState* — used to get CPU object from vCPU index */
+/* qemu_get_cpu(index) -> CPUState* used to get CPU object from vCPU index */
 typedef void *(*qemu_get_cpu_fn)(int index);
 static qemu_get_cpu_fn g_qemu_get_cpu = NULL;
 
 /*
- * find_qemu_sym — scan the static ELF symbol table of /proc/self/exe and
+ * find_qemu_sym scan the static ELF symbol table of /proc/self/exe and
  * return the runtime address of 'sym_name', or 0 on failure.
  */
 static uintptr_t find_qemu_sym(const char *sym_name)
@@ -201,12 +201,18 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
 typedef struct {
-    uint64_t trigger_insn; /* absolute insn count at which to inject       */
-    uint64_t target_addr;  /* guest virtual address (byte granularity)     */
-    int      bit;          /* bit index 0-7 within the target byte         */
-    bool     active;       /* an injection is scheduled                    */
-    bool     done;         /* injection was performed                      */
+    uint64_t trigger_insn;    /* absolute insn count at which to inject       */
+    uint64_t target_addr;     /* guest virtual address (byte granularity)     */
+    int      bit;             /* bit index 0-7 within the target byte         */
+    bool     active;          /* an injection is scheduled                    */
+    bool     done;            /* injection was performed                      */
+    bool     deferred_logged; /* have we logged the first kernel-mode deferral */
+    int      retry_count;     /* times we rescheduled due to wrong MMU ctx    */
 } InjectionSpec;
+
+/* Reschedule delay and maximum retries when we fire in the wrong process. */
+#define RETRY_DELAY    100000ULL   /* instructions between context retries    */
+#define MAX_RETRIES    200         /* ~20 s at 1 M insns/s, well within 30 s  */
 
 typedef struct {
     bool     valid;        /* a result is available                        */
@@ -283,10 +289,19 @@ static void perform_injection(unsigned vcpu_idx, uint64_t addr, int bit)
     }
 
     if (!read_ok) {
-        plugin_log("INJECT ERROR: cannot read vaddr 0x%" PRIx64, addr);
         pthread_mutex_lock(&inj_mutex);
-        last_result.valid   = true;
-        last_result.success = false;
+        if (pending.retry_count < MAX_RETRIES) {
+            plugin_log("INJECT ERROR: cannot read vaddr 0x%" PRIx64 ". Retrying...", addr);
+            pending.retry_count++;
+            pending.trigger_insn = atomic_load(&insn_count) + RETRY_DELAY;
+            pending.done = false;
+            pending.active = true;
+            atomic_store(&inj_pending, true);
+        } else {
+            plugin_log("INJECT ERROR: max retries reached for vaddr 0x%" PRIx64, addr);
+            last_result.valid   = true;
+            last_result.success = false;
+        }
         pthread_mutex_unlock(&inj_mutex);
         g_byte_array_free(buf, TRUE);
         return;
@@ -297,7 +312,7 @@ static void perform_injection(unsigned vcpu_idx, uint64_t addr, int bit)
 
     /* Write the flipped byte via cpu_memory_rw_debug 
      * Runs in the vCPU thread with the CHESS process's MMU context active,
-     * so both .text and .bss addresses are accessible — no GDB halt needed. */
+     * so both .text and .bss addresses are accessible no GDB halt needed. */
     if (g_cpu_rw_debug && g_qemu_get_cpu) {
         void *cpu = g_qemu_get_cpu((int)vcpu_idx);
         if (cpu) {
@@ -322,11 +337,14 @@ static void perform_injection(unsigned vcpu_idx, uint64_t addr, int bit)
     g_byte_array_free(buf, TRUE);
 }
 
-/* Per-instruction callback */
+/* Per-instruction callback.
+ * userdata carries the instruction's virtual PC (cast to void*) so we can
+ * check whether the guest CPU is in user space before firing the injection.
+ * On ARM32, PC < 0xC0000000 = user space, PC >= 0xC0000000 = kernel.      */
 
 static void vcpu_insn_exec(unsigned vcpu_index, void *userdata)
 {
-    (void)userdata;
+    uint64_t pc  = (uint64_t)(uintptr_t)userdata;
     uint64_t cnt = atomic_fetch_add(&insn_count, 1) + 1;
 
     /* Fast path: skip mutex if nothing is pending */
@@ -336,12 +354,30 @@ static void vcpu_insn_exec(unsigned vcpu_index, void *userdata)
     pthread_mutex_lock(&inj_mutex);
 
     if (pending.active && !pending.done && cnt >= pending.trigger_insn) {
+        /* We must inject when the target process's MMU context is active.
+         * Since CHESS_Pathfinder0FS is compiled without PIE, its .text segment
+         * is statically located between 0x00011E00 and 0x000E7134.
+         * Waiting until the PC is inside this range guarantees that the active
+         * page tables belong to FPrime and the target addresses are mapped. */
+        if (pc < 0x00011E00ULL || pc > 0x000E7134ULL) {
+            if (!pending.deferred_logged) {
+                plugin_log("DEFER: PC=0x%" PRIx64
+                           ", waiting for CHESS user context", pc);
+                pending.deferred_logged = true;
+            }
+            pthread_mutex_unlock(&inj_mutex);
+            return;
+        }
+
         uint64_t addr = pending.target_addr;
         int      bit  = pending.bit;
 
         pending.done   = true;
         pending.active = false;
         atomic_store(&inj_pending, false);
+
+        if (pending.deferred_logged)
+            plugin_log("DEFERRED injection now firing at user PC=0x%" PRIx64, pc);
 
         pthread_mutex_unlock(&inj_mutex);
 
@@ -361,11 +397,12 @@ static void vcpu_tb_trans(qemu_plugin_id_t id, struct qemu_plugin_tb *tb)
 
     for (size_t i = 0; i < n; i++) {
         struct qemu_plugin_insn *insn = qemu_plugin_tb_get_insn(tb, i);
+        uint64_t vaddr = qemu_plugin_insn_vaddr(insn);
         qemu_plugin_register_vcpu_insn_exec_cb(
             insn,
             vcpu_insn_exec,
             QEMU_PLUGIN_CB_NO_REGS,
-            NULL);
+            (void *)(uintptr_t)vaddr);
     }
 }
 
@@ -385,7 +422,7 @@ static bool json_u64(const char *json, const char *key, uint64_t *out)
     while (*p == ' ') p++;
     char *end;
     errno = 0;
-    uint64_t v = strtoull(p, &end, 0); /* base 0 → auto hex/dec */
+    uint64_t v = strtoull(p, &end, 0); /* base 0 -> auto hex/dec */
     if (errno || end == p) return false;
     *out = v;
     return true;
@@ -445,11 +482,13 @@ static void handle_client(int fd)
         } else {
             uint64_t trigger = atomic_load(&insn_count) + delay;
             pthread_mutex_lock(&inj_mutex);
-            pending.trigger_insn = trigger;
-            pending.target_addr  = addr;
-            pending.bit          = (int)bit_u;
-            pending.active       = true;
-            pending.done         = false;
+            pending.trigger_insn    = trigger;
+            pending.target_addr     = addr;
+            pending.bit             = (int)bit_u;
+            pending.active          = true;
+            pending.done            = false;
+            pending.deferred_logged = false;
+            pending.retry_count     = 0;
             pthread_mutex_unlock(&inj_mutex);
             atomic_store(&inj_pending, true);
 
@@ -589,7 +628,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
         fprintf(stderr,
                 "[fault_inject] WARNING: cpu_memory_rw_debug=0x%" PRIxPTR
                 " qemu_get_cpu=0x%" PRIxPTR
-                " — direct write unavailable, will fall back to GDB\n",
+                " direct write unavailable, will fall back to GDB\n",
                 (uintptr_t)g_cpu_rw_debug, (uintptr_t)g_qemu_get_cpu);
     }
 
@@ -600,7 +639,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
 
     // Warn if not running under TCG (plugins are TCG-only)
     if (!info->system_emulation)
-        plugin_log("WARNING: not in system-emulation mode — unexpected");
+        plugin_log("WARNING: not in system-emulation mode unexpected");
 
     // Start Unix socket server thread
     pthread_t t;

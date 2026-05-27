@@ -64,7 +64,7 @@ $(TARGET): $(SRCS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 	@echo "Built: $(TARGET)"
 	@echo "  QEMU headers: $(QEMU_INCLUDE)"
-	@file $(TARGET) | grep -o 'shared object.*'
+	@readelf -h $(TARGET) 2>/dev/null | grep -o 'Shared object.*' || true
 
 clean:
 	rm -f $(TARGET)

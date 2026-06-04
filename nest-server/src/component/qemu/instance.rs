@@ -198,8 +198,8 @@ impl QemuInstance {
         }
 
         // Connect a QMP client to the socket
-        let qmp_stream = Self::connect_stream(&config.qmp_socket_path, Duration::from_secs(1))?;
-        let qmp_client = QmpClient::connect(qmp_stream, Some(Duration::from_secs(1)))?;
+        let qmp_stream = Self::connect_stream(&config.qmp_socket_path, Duration::from_secs(30))?;
+        let qmp_client = QmpClient::connect(qmp_stream, Some(Duration::from_secs(30)))?;
 
         Ok(QemuInstance {
             process,

@@ -42,7 +42,7 @@ pub struct QemuComponentConfig {
     #[serde(default = "default_ngpio")]
     pub ngpio: u32,
     #[serde(default)]
-    pub gpio_names: HashMap<String, String>,
+    pub gpio_names: HashMap<u32, String>,
     pub i2c_socket: Option<String>,
     #[serde(default = "default_i2c_timeout_ms")]
     pub i2c_timeout_ms: u64,
@@ -83,9 +83,8 @@ impl QemuComponent {
     ) -> Result<Self> {
         let mut gpio_lines = vec![GpioLine::default(); config.ngpio as usize];
         for (i, name) in &config.gpio_names {
-            let idx: usize = i.parse()?;
-            gpio_lines.get_mut(idx)
-                .ok_or_else(|| anyhow!("Gpio index {} out of range 0-{}", idx, config.ngpio))?
+            gpio_lines.get_mut(*i as usize)
+                .ok_or_else(|| anyhow!("Gpio index {} out of range 0-{}", i, config.ngpio))?
                 .name = Some(name.clone());
         }
 

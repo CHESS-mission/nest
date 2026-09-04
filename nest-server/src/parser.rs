@@ -87,7 +87,7 @@ fn parse_component(comp: &Yaml) -> Result<ComponentSpec, ParserError> {
     let mut config_map = serde_json::Map::new();
     if let Some(cfg) = comp["config"].as_hash() {
         for (k, v) in cfg {
-            if let Some(key) = k.as_str() {
+            if let Some(key) = yaml_key_to_string(k) {
                 config_map.insert(key.to_string(), yaml_to_json(v));
             }
         }
@@ -191,6 +191,16 @@ fn parse_wire_endpoints(wire: &Yaml) -> Result<WireSpec, ParserError> {
 }
 
 // helper functions
+fn yaml_key_to_string(k: &Yaml) -> Option<String> {
+    match k {
+        Yaml::String(s) => Some(s.clone()),
+        Yaml::Integer(n) => Some(n.to_string()),
+        Yaml::Real(n) => Some(n.clone()),
+        Yaml::Boolean(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
 fn yaml_to_json(y: &Yaml) -> serde_json::Value {
     match y {
         Yaml::Real(s) => {
@@ -207,7 +217,7 @@ fn yaml_to_json(y: &Yaml) -> serde_json::Value {
         Yaml::Hash(hm) => {
             let mut map = serde_json::Map::new();
             for (k, v) in hm {
-                if let Some(key) = k.as_str() {
+                if let Some(key) = yaml_key_to_string(k) {
                     map.insert(key.to_string(), yaml_to_json(v));
                 }
             }

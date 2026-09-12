@@ -24,22 +24,34 @@ echo "Injecting $BINARY into $IMAGE..."
 
 # Run guestfish with automatic mounting (-i).
 # If guestfish is already in PATH (i.e. we are inside the nix devShell) use it
-# directly — avoids downloading a second copy of libguestfs-with-appliance.
+# directly avoids downloading a second copy of libguestfs-with-appliance.
 # Otherwise fall back to 'nix shell' for standalone usage.
+_inject_into() {
+    local img="$1"
+    guestfish -a "$img" -i <<EOF
+mkdir-p "$TARGET_DIR"
+upload "$BINARY" "$TARGET_FILE"
+chmod 0755 "$TARGET_FILE"
+mkdir-p /root/bin
+upload "$BINARY" /root/bin/CHESS_Pathfinder0FS_A
+chmod 0755 /root/bin/CHESS_Pathfinder0FS_A
+ln-sf /root/bin/CHESS_Pathfinder0FS_A /root/bin/stable
+echo "Injected $img"
+EOF
+}
+
+_inject() {
+    _inject_into "$IMAGE"
+    # Also inject into image-copy (used by NEST SEU topology)
+    if [[ -f "image-copy/disk.qcow2" ]]; then
+        _inject_into "image-copy/disk.qcow2"
+    fi
+}
+
 if command -v guestfish &>/dev/null; then
-    guestfish -a "$IMAGE" -i <<EOF
-mkdir-p "$TARGET_DIR"
-upload "$BINARY" "$TARGET_FILE"
-chmod 0755 "$TARGET_FILE"
-echo "Successfully injected to $TARGET_FILE"
-EOF
+    _inject
 else
-    nix shell nixpkgs#libguestfs-with-appliance --command guestfish -a "$IMAGE" -i <<EOF
-mkdir-p "$TARGET_DIR"
-upload "$BINARY" "$TARGET_FILE"
-chmod 0755 "$TARGET_FILE"
-echo "Successfully injected to $TARGET_FILE"
-EOF
+    nix shell nixpkgs#libguestfs-with-appliance --command bash -c "$(declare -f _inject); IMAGE='$IMAGE' BINARY='$BINARY' TARGET_DIR='$TARGET_DIR' TARGET_FILE='$TARGET_FILE' _inject"
 fi
 
 echo "Done."

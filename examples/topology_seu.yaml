@@ -1,0 +1,295 @@
+# topology_seu.yaml NEST topology for SEU fault-injection testing
+#
+# This is a copy of nest/examples/all-sensors.yaml with two additions:
+#
+#   1. The fault_inject TCG plugin is loaded via QEMU's -plugin option.
+#      It opens a Unix control socket that scenario_seu.py connects to.
+#
+#   2. -icount is intentionally NOT used: it causes "Time jumped backwards"
+#      in the guest (systemd-journald, FPrime Svc::Health) because the virtual
+#      clock stalls during I/O pauses.  The plugin counts instructions without
+#      it; see the inline comment in the options block for details.
+#
+# Usage:
+#   # From nest/ directory:
+#   nix develop --command bash -c \
+#     "RUST_LOG=nest_server=info ./target/debug/nest-server \
+#      --topology ../fault_injection/topology_seu.yaml"
+#
+# Notes:
+#   - The plugin path is relative to the nest/ working directory.
+#     Adjust PLUGIN_PATH if you run NEST from a different directory.
+#   - PLUGIN_SOCKET must match FAULT_INJECT_SOCK in scenario_seu.py.
+environment_variables:
+  - name: temp
+    type: float
+  - name: accel
+    type: vec3
+  - name: omega
+    type: vec3
+  - name: B_field
+    type: vec3
+
+components:
+  - name: QEMU
+    type: qemu
+    config:
+      arch: arm
+      mem_mb: 1024
+      options:
+        # CPU / machine
+        - option: cpu
+          value: cortex-a7
+        - option: M
+          value: virt
+        - option: kernel
+          value: ./image-copy/zImage
+        - option: append
+          value: "rootwait root=/dev/vda console=hvc0"
+        - option: drive
+          value: "if=none,file=./image-copy/disk.qcow2,id=hd0"
+        - option: device
+          value: "virtio-blk-device,drive=hd0"
+        - option: nographic
+
+        # Virtual console (leaves UART ports free)
+        - option: device
+          value: virtio-serial
+        - option: chardev
+          value: "pty,path=/tmp/qemu-serial-pty,id=char0"
+        - option: device
+          value: "virtconsole,chardev=char0"
+
+        # Force TCG accelerator (required for plugins)
+        # On an x86 host emulating ARM this is the default, but being explicit
+        # ensures the plugin API is available even if KVM is detected.
+        - option: accel
+          value: tcg
+
+        # GDB stub (memory write path for fault injection)
+        # QEMU plugin API v4 (QEMU 10.0) lacks qemu_plugin_write_memory_vaddr.
+        # The plugin reads the byte and signals Python; Python writes via GDB.
+        # Per QEMU docs, the guest starts immediately without -S.
+        - option: gdb
+          value: "tcp::1234"
+
+        # Deterministic instruction counting (DISABLED)
+        # -icount shift=0,sleep=off causes "Time jumped backwards" inside the
+        # guest because the virtual clock stalls during I/O and TCG translation
+        # pauses, then catches up non-uniformly.  systemd-journald (and FPrime's
+        # Svc::Health) see this as a backwards clock jump identical to the
+        # GDB-halt problem we are trying to avoid.
+        #
+        # The plugin counts instructions correctly without -icount.  Injections
+        # are less reproducible across runs (same N may hit slightly different
+        # code), but this is acceptable for Phase 1 and Phase 2 campaigns.
+        #
+        # Uncomment only after confirming FPrime health monitoring tolerates it:
+        # - option: icount
+        #   value: "shift=0,sleep=off"
+
+        # Fault injection plugin
+        # socket= : control socket path (must match FAULT_INJECT_SOCK env var)
+        # log=    : plugin log (appended, not truncated)
+        #
+        # IMPORTANT: the path to fault_inject.so must be absolute or relative
+        # to the directory from which nest-server is run (i.e. nest/).
+        - option: plugin
+          value: "plugins/fault_inject.so,socket=/tmp/fi.sock,log=/tmp/fault_inject.log"
+
+      i2c_timeout_ms: 10
+      ngpio: 16
+      nuart: 2
+
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+        - name: gpio13
+          type: bool
+        - name: uart0
+          type: bytes
+        - name: uart1
+          type: bytes
+
+  # Temperature sensors (0x48-0x4F)
+  # CHESS polls all 8 PCT2075 sensors.  All share the same `temp` env var.
+  # Missing sensors -> I2C NACK -> perpetual "Temp suspicious data" recovery
+  # loop at baseline, which poisons every SEU outcome classification.
+
+  - name: PCT2075_0
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x48"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: PCT2075_1
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x49"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: PCT2075_2
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x4A"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: PCT2075_3
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x4B"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: PCT2075_4
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x4C"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: PCT2075_5
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x4D"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: PCT2075_6
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x4E"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  - name: PCT2075_7
+    type: wasm
+    config:
+      module: component_artifacts/pct2075tp147.wasm
+      options:
+        - ["i2cAddress", "0x4F"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: temperature
+          variable: temp
+          type: float
+
+  # IMU & Magnetometer
+  - name: IIM-42652
+    type: wasm
+    config:
+      module: component_artifacts/iim42652.wasm
+      options:
+        - ["i2cAddress", "0x68"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: acceleration
+          variable: accel
+          type: vec3
+        - name: angular-velocity
+          variable: omega
+          type: vec3
+
+  - name: MMC5983MA
+    type: wasm
+    config:
+      module: component_artifacts/mmc5983ma.wasm
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+      environment:
+        - name: mag-field
+          variable: B_field
+          type: vec3
+
+wires:
+  -
+    - component: QEMU
+      port: i2c
+    - component: PCT2075_0
+      port: i2c
+    - component: PCT2075_1
+      port: i2c
+    - component: PCT2075_2
+      port: i2c
+    - component: PCT2075_3
+      port: i2c
+    - component: PCT2075_4
+      port: i2c
+    - component: PCT2075_5
+      port: i2c
+    - component: PCT2075_6
+      port: i2c
+    - component: PCT2075_7
+      port: i2c
+    - component: IIM-42652
+      port: i2c
+    - component: MMC5983MA
+      port: i2c

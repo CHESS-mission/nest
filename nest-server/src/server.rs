@@ -102,7 +102,11 @@ impl UpdateBroadcaster {
                             event: event,
                             data: value,
                         };
-                        tracing::debug!("broadcasting event: {:?}", event_update);
+                        tracing::debug!(
+                            component = %event_update.component,
+                            event     = %event_update.event,
+                            "broadcasting event: {}", event_update.data
+                        );
                         event_tx.send(NestApiUpdate::Event(event_update)).ok();
                     }
                     Some((source, ComponentEvent::Error { timestamp, message })) => {

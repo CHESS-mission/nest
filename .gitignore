@@ -7,10 +7,3 @@ plugins/*.o
 image/
 image-copy/
 component_artifacts/*.wasm
-scenarios/images/
-image/
-image-copy/
-component_artifacts/*.wasm
-image/
-image-copy/
-component_artifacts/*.wasm

@@ -19,6 +19,7 @@
         devShells.default = with pkgs; mkShell {
           name = "NEST devShell";
           buildInputs = [
+            uv
             picocom
             socat
             extism-cli

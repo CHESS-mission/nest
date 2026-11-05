@@ -47,7 +47,7 @@ pub mod nest_component {
         wasm::host::HostCtx,
     };
 
-    bindgen!("nest-component" in "src/component/wasm/wit");
+    bindgen!("nest-component" in "../wit");
 
     impl nest::plugin::types::Host for HostCtx {}
     impl nest::plugin::errors::Host for HostCtx {}
@@ -91,7 +91,7 @@ pub mod timeout_ext {
 
     use crate::component::wasm::{host::HostCtx, timeout::TimeoutRequest};
 
-    bindgen!("timeout-ext" in "src/component/wasm/wit");
+    bindgen!("timeout-ext" in "../wit");
 
     impl TimeoutExtImports for HostCtx {
         fn set_timer(&mut self, duration_ms: u32) -> TimerId {

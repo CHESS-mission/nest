@@ -1,5 +1,4 @@
 ---
-# title: Running a VM
 icon: lucide/tv-minimal-play
 ---
 

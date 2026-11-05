@@ -1,8 +1,30 @@
-# NEST
+<div align="center">
+  <p align="center">
+    <img src="docs/images/NEST-logo-full.png" alt="NEST logo" height="150" style="margin: 20px;">
+    <!-- <picture> -->
+    <!--   <source media="(prefers-color-scheme: dark)" srcset="docs/images/NEST-logo-full-dark.png"> -->
+    <!--   <source media="(prefers-color-scheme: light)" srcset="docs/images/NEST-logo-full.png"> -->
+    <!--   <img src="docs/images/NEST-logo-full.png" alt="NEST logo" height="150" style="margin: 20px;"> -->
+    <!-- </picture> -->
+  </p>
 
-NEST (Numerical Environment for Software Testing) is a modular integration
-testing framework intended for flight software verification written in Rust
-using [Extism](https://extism.org/).
+  <p align="center">
+    <strong>
+       A modular framework for reproducible software-in-the-loop testing of
+       embedded systems
+    </strong>
+  </p>
+
+  <p align="center">
+    <img src="https://img.shields.io/badge/status-active-brightgreen?style=for-the-badge" alt="Status" />
+    <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License" />
+    <img src="https://img.shields.io/badge/python-3.9+-blueviolet?style=for-the-badge" alt="Python" />
+  </p>
+</div>
+
+<!-- NEST (Numerical Environment for Software Testing) is a modular integration -->
+<!-- testing framework intended for flight software verification written in Rust -->
+<!-- using Extism. -->
 
 ## Build
 

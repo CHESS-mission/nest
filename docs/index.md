@@ -2,6 +2,13 @@
 icon: lucide/rocket
 ---
 
+![NEST logo](./images/NEST-logo-full.png#only-light){ width="360" }
+![NEST logo](./images/NEST-logo-full-dark.png#only-dark){ width="360" }
+/// caption
+///
+
+---
+
 # Get started
 
 For full documentation visit [zensical.org](https://zensical.org/docs/).

@@ -8,8 +8,10 @@ repo_url = "https://github.com/CHESS-mission/nest"
 repo_name = "CHESS-mission/nest"
 
 [project.theme]
-font.code = "JetBrains Mono"
 language = "en"
+font.code = "JetBrains Mono"
+logo = "images/NEST-logo.png"
+favicon = "images/NEST-logo.png"
 features = [
   "content.code.annotate",
   "content.code.copy",
@@ -64,6 +66,7 @@ md_in_html = {}
 toc.permalink = true
 pymdownx.arithmatex.generic = true
 pymdownx.betterem = {}
+pymdownx.blocks.caption = {}
 pymdownx.caret = {}
 pymdownx.details = {}
 pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"

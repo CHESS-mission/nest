@@ -1,6 +1,6 @@
 use nest_api::{LogLevelDTO, LogUpdate, NestApiAction, NestApiUpdate, StatusUpdate, TopologyDTO, UploadTopologyAction};
 use leptos::{html::{Div, Input}, prelude::*, server::codee::string::FromToStringCodec};
-use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
+use leptos_meta::{provide_meta_context, Link, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
     StaticSegment,
@@ -74,6 +74,9 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/nest.css"/>
+
+        // sets the icon
+        <Link rel="icon" href="/assets/NEST-logo.svg" type_="image/svg+xml"/>
 
         // sets the document title
         <Title text="NEST"/>
@@ -268,6 +271,7 @@ fn Header(
     view! {
         <div class="px-2 pt-1 pb-2 flex bg-white border border-gray-300/50 shadow-md">
             <div class="ml-1 flex items-center text-gray-950 text-5xl font-extralight">
+                <img src="/assets/NEST-logo.png" alt="NEST logo" class="h-[1em] w-auto mr-2 align-middle" />
                 "NEST"
             </div>
 

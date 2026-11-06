@@ -6,6 +6,8 @@ use serde_json::{Map, Value};
 ///
 /// ```
 /// use serde_json::{json, Value};
+/// use std::sync::{Arc, Mutex};
+/// use nest_server::set_status;
 ///
 /// let status = Arc::new(Mutex::new(Value::Null));
 ///

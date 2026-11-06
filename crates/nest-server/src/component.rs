@@ -1,6 +1,5 @@
 pub mod mux;
 pub mod qemu;
-pub mod test;
 pub mod wasm;
 
 use std::{collections::HashMap, sync::{Arc, Mutex}, thread::{self, JoinHandle}, time::Instant};

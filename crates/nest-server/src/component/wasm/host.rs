@@ -53,21 +53,21 @@ pub mod nest_component {
     impl nest::plugin::errors::Host for HostCtx {}
 
     impl nest::plugin::log::Host for HostCtx {
-        fn info(&mut self, msg: String) -> () {
+        fn info(&mut self, msg: String) {
             let _ = self.logger.info(msg);
         }
 
-        fn warning(&mut self, msg: String) -> () {
+        fn warning(&mut self, msg: String) {
             let _ = self.logger.warning(msg);
         }
 
-        fn error(&mut self, msg: String) -> () {
+        fn error(&mut self, msg: String) {
             let _ = self.logger.error(msg);
         }
     }
 
     impl NestComponentImports for HostCtx {
-        fn emit(&mut self, event: String, value: String) -> () {
+        fn emit(&mut self, event: String, value: String) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&value) {
                 let _ = self.sender.send(ComponentEvent::sim_event(event, value));
             } else {
@@ -191,7 +191,7 @@ impl IntoWit<Quaternion> for QuaternionVar {
 impl IntoWit<Tensor> for TensorVar {
     fn into_wit(self) -> Tensor {
         Tensor {
-            shape: self.shape().into_iter().map(|x| *x as u32).collect(),
+            shape: self.shape().iter().map(|x| *x as u32).collect(),
             data: self.as_slice().unwrap().to_vec(),
         }
     }

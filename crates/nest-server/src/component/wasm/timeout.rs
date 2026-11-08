@@ -63,11 +63,11 @@ pub fn start_timeout_scheduler() -> TimeoutSchedulerHandle {
 
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                     // A timer expired
-                    if let Some(Reverse((deadline, id))) = timers.peek().cloned() {
-                        if deadline <= Instant::now() {
-                            timers.pop();
-                            let _ = tx_from_scheduler.send(Timeout { id });
-                        }
+                    if let Some(Reverse((deadline, id))) = timers.peek().cloned()
+                        && deadline <= Instant::now()
+                    {
+                        timers.pop();
+                        let _ = tx_from_scheduler.send(Timeout { id });
                     }
                 }
 

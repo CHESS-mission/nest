@@ -180,7 +180,7 @@ impl QemuInstance {
             let mut cb = on_stdout;
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(std::result::Result::ok) {
                     cb(line);
                 }
             });
@@ -191,7 +191,7 @@ impl QemuInstance {
             let mut cb = on_stderr;
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(std::result::Result::ok) {
                     cb(line);
                 }
             });

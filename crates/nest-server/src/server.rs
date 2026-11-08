@@ -99,7 +99,7 @@ impl UpdateBroadcaster {
                                 .duration_since(sim_started_at)
                                 .as_secs_f64(),
                             component: source,
-                            event: event,
+                            event,
                             data: value,
                         };
                         tracing::debug!("broadcasting event: {:?}", event_update);
@@ -216,11 +216,11 @@ impl NestServer {
         }
 
         // Perform graceful shutdown of components
-        if let Ok(mut broadcaster_guard) = state.update_broadcaster.try_lock() {
-            if let Some(broadcaster) = broadcaster_guard.take() {
-                tracing::info!("Stopping update broadcaster");
-                broadcaster.stop().await;
-            }
+        if let Ok(mut broadcaster_guard) = state.update_broadcaster.try_lock()
+            && let Some(broadcaster) = broadcaster_guard.take()
+        {
+            tracing::info!("Stopping update broadcaster");
+            broadcaster.stop().await;
         }
 
         if let Ok(mut sim_guard) = state.simulator.try_lock() {

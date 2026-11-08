@@ -23,12 +23,12 @@ impl TopologySpec {
     }
 }
 
-impl Into<TopologyDTO> for TopologySpec {
-    fn into(self) -> TopologyDTO {
+impl From<TopologySpec> for TopologyDTO {
+    fn from(val: TopologySpec) -> Self {
         TopologyDTO {
-            environment: self.environment.into_iter().map(Into::into).collect(),
-            components: self.components.into_iter().map(Into::into).collect(),
-            wires: self.wires.into_iter().map(Into::into).collect(),
+            environment: val.environment.into_iter().map(Into::into).collect(),
+            components: val.components.into_iter().map(Into::into).collect(),
+            wires: val.wires.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -45,11 +45,11 @@ impl EnvironmentVarSpec {
     }
 }
 
-impl Into<EnvironmentVarDTO> for EnvironmentVarSpec {
-    fn into(self) -> EnvironmentVarDTO {
+impl From<EnvironmentVarSpec> for EnvironmentVarDTO {
+    fn from(val: EnvironmentVarSpec) -> Self {
         EnvironmentVarDTO {
-            variable: self.name,
-            var_type: self.var_type.into(),
+            variable: val.name,
+            var_type: val.var_type.into(),
         }
     }
 }
@@ -81,12 +81,12 @@ impl ComponentSpec {
     }
 }
 
-impl Into<ComponentDTO> for ComponentSpec {
-    fn into(self) -> ComponentDTO {
+impl From<ComponentSpec> for ComponentDTO {
+    fn from(val: ComponentSpec) -> Self {
         ComponentDTO {
-            name: self.name,
-            component_type: self.component_type.into(),
-            ports: self.system_ports.into_iter().map(Into::into).collect(),
+            name: val.name,
+            component_type: val.component_type.into(),
+            ports: val.system_ports.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -98,9 +98,9 @@ pub enum ComponentTypeSpec {
     Mux,
 }
 
-impl Into<ComponentTypeDTO> for ComponentTypeSpec {
-    fn into(self) -> ComponentTypeDTO {
-        match self {
+impl From<ComponentTypeSpec> for ComponentTypeDTO {
+    fn from(val: ComponentTypeSpec) -> Self {
+        match val {
             ComponentTypeSpec::Qemu => ComponentTypeDTO::Qemu,
             ComponentTypeSpec::Wasm => ComponentTypeDTO::Wasm,
             ComponentTypeSpec::Mux => ComponentTypeDTO::Mux,
@@ -128,11 +128,11 @@ impl SystemPortSpec {
     }
 }
 
-impl Into<SystemPortDTO> for SystemPortSpec {
-    fn into(self) -> SystemPortDTO {
+impl From<SystemPortSpec> for SystemPortDTO {
+    fn from(val: SystemPortSpec) -> Self {
         SystemPortDTO {
-            port: self.name,
-            port_type: self.port_type.into(),
+            port: val.name,
+            port_type: val.port_type.into(),
         }
     }
 }
@@ -160,9 +160,9 @@ pub enum PortTypeSpec {
     I2c,
 }
 
-impl Into<PortTypeDTO> for PortTypeSpec {
-    fn into(self) -> PortTypeDTO {
-        match self {
+impl From<PortTypeSpec> for PortTypeDTO {
+    fn from(val: PortTypeSpec) -> Self {
+        match val {
             PortTypeSpec::Int => PortTypeDTO::Int,
             PortTypeSpec::Float => PortTypeDTO::Float,
             PortTypeSpec::Bool => PortTypeDTO::Bool,
@@ -184,9 +184,9 @@ pub enum EnvPortTypeSpec {
     Tensor,
 }
 
-impl Into<EnvPortTypeDTO> for EnvPortTypeSpec {
-    fn into(self) -> EnvPortTypeDTO {
-        match self {
+impl From<EnvPortTypeSpec> for EnvPortTypeDTO {
+    fn from(val: EnvPortTypeSpec) -> Self {
+        match val {
             EnvPortTypeSpec::Int => EnvPortTypeDTO::Int,
             EnvPortTypeSpec::Float => EnvPortTypeDTO::Float,
             EnvPortTypeSpec::Bool => EnvPortTypeDTO::Bool,
@@ -209,10 +209,10 @@ impl WireSpec {
     }
 }
 
-impl Into<WireDTO> for WireSpec {
-    fn into(self) -> WireDTO {
+impl From<WireSpec> for WireDTO {
+    fn from(val: WireSpec) -> Self {
         WireDTO {
-            endpoints: self.endpoints.into_iter().map(Into::into).collect(),
+            endpoints: val.endpoints.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -232,11 +232,11 @@ impl WireEndpointSpec {
     }
 }
 
-impl Into<WireEndpointDTO> for WireEndpointSpec {
-    fn into(self) -> WireEndpointDTO {
+impl From<WireEndpointSpec> for WireEndpointDTO {
+    fn from(val: WireEndpointSpec) -> Self {
         WireEndpointDTO {
-            component: self.component,
-            port: self.port,
+            component: val.component,
+            port: val.port,
         }
     }
 }

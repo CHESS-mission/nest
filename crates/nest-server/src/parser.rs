@@ -16,7 +16,7 @@ impl TopologySpec {
                 Some(yaml) => parse_topology(yaml),
                 None => Err(ParserError::InvalidFormat),
             },
-            Err(_) => return Err(ParserError::InvalidFormat),
+            Err(_) => Err(ParserError::InvalidFormat),
         }
     }
 

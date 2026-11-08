@@ -372,7 +372,7 @@ pub fn start_i2c_backend<P: AsRef<Path>>(i2c_socket: P, timeout: Duration, logge
             Ok(())
         })()
         .inspect_err(|e: &I2cError| {
-            let _ = logger.error(format!("UartBackend error: {}", e.to_string()));
+            let _ = logger.error(format!("UartBackend error: {e}"));
         })
     });
 

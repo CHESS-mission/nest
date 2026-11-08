@@ -135,14 +135,14 @@ fn HomePage() -> impl IntoView {
     
     Effect::new(move |_| {
         message.with(move |message| {
-            if let Some(message) = message {
-                if let Ok(event) = serde_json::from_str(&message) {
-                    match event {
-                        NestApiUpdate::Status(update)=>set_simulator_state.set(update.into()),
-                        NestApiUpdate::Event(_event_update) => (), // TODO
-                        NestApiUpdate::Log(log)=>logs.update(|logs|logs.push(log)),
-                        NestApiUpdate::Error(_error_update) => (), // TODO
-                    }
+            if let Some(message) = message
+                && let Ok(event) = serde_json::from_str(message)
+            {
+                match event {
+                    NestApiUpdate::Status(update)=>set_simulator_state.set(update.into()),
+                    NestApiUpdate::Event(_event_update) => (), // TODO
+                    NestApiUpdate::Log(log)=>logs.update(|logs|logs.push(log)),
+                    NestApiUpdate::Error(_error_update) => (), // TODO
                 }
             }
         })
@@ -261,10 +261,10 @@ fn Header(
     let on_select_topology_file = move |ev: Event| {
         ev.prevent_default();
 
-        if let Some(files) = file_input.get().unwrap().files() {
-            if let Some(file) = files.get(0) {
-                load_topology(file);
-            }
+        if let Some(files) = file_input.get().unwrap().files()
+            && let Some(file) = files.get(0)
+        {
+            load_topology(file);
         }
     };
 
@@ -355,23 +355,20 @@ fn SidePanel(
     let console_ref: NodeRef<Div> = NodeRef::new();
     let (auto_scroll, set_auto_scroll) = signal(true);
 
-    let on_scroll = {
-        let console_ref = console_ref.clone();
-        move |_| {
-            if let Some(div) = console_ref.get() {
-                let at_bottom = div.scroll_top() + div.client_height() >= div.scroll_height() - 5;
-                set_auto_scroll.set(at_bottom);
-            }
+    let on_scroll = move |_| {
+        if let Some(div) = console_ref.get() {
+            let at_bottom = div.scroll_top() + div.client_height() >= div.scroll_height() - 5;
+            set_auto_scroll.set(at_bottom);
         }
     };
 
     // Auto-scroll only if user is at the bottom
     Effect::new(move || {
         logs.with(|_| {
-            if auto_scroll.get() {
-                if let Some(div) = console_ref.get() {
-                    div.set_scroll_top(div.scroll_height());
-                }
+            if auto_scroll.get()
+                && let Some(div) = console_ref.get()
+            {
+                div.set_scroll_top(div.scroll_height());
             }
         });
     });

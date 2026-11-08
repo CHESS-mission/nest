@@ -227,7 +227,7 @@ impl<T> SimulationReceiver<T> {
             self.receivers.swap_remove(i);
         }
 
-        return msg
+        msg
     }
 }
 

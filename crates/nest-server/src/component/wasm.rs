@@ -158,10 +158,10 @@ impl Component for WasmComponent {
 
                     dispatcher.register_system_port(port, Box::new(move |msg, state| {
                         if let Err(e) = port_in.call(&mut state.store, (msg.into_wit(),)) {
-                            logger.error(format!("Failed to call export {}: {}", &export_name, e))?;
+                            logger.error(format!("Failed to call export {}: {}", export_name, e))?;
                         }
                         if let Err(e) = port_in.post_return(&mut state.store) {
-                            logger.error(format!("Post return failed for {}: {}", &export_name, e))?;
+                            logger.error(format!("Post return failed for {}: {}", export_name, e))?;
                         }
 
                         Ok(HandlerStatus::Ok)
@@ -205,10 +205,11 @@ impl Component for WasmComponent {
     }
 
     fn from_params(params: ComponentParams) -> Result<Self> where Self: Sized {
-        let mut comp = Self::default();
-
         // Parse config parameters into a TestComponentConfig
-        comp.config = serde_json::from_value::<WasmComponentConfig>(params.config().clone())?;
+        let mut comp = Self {
+            config: serde_json::from_value::<WasmComponentConfig>(params.config().clone())?,
+            ..Default::default()
+        };
 
         // Get system ports from params
         for (k, v) in &params.system_ports {

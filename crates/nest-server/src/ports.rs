@@ -190,7 +190,6 @@ impl From<AnySharedEnvironmentVar> for AnyEnvironmentPort {
 /// - [BytesMessage]
 /// - [TextMessage]
 /// - [I2cMessage]
-
 pub type IntMessage = i32;
 pub type FloatMessage = f32;
 pub type BoolMessage = bool;

@@ -103,6 +103,16 @@ impl ComponentParams {
     }
 }
 
+impl Default for ComponentParams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A callback registered with a [MessageDispatcher]. It receives the message and a mutable
+/// reference to the dispatcher's state.
+type HandlerFn<'a, T, S> = Box<dyn Fn(T, &mut S) -> Result<HandlerStatus> + Send + 'a>;
+
 // MessageDispatcher
 
 /// A utility struct that registers a set of receivers and callbacks, and implements the
@@ -122,13 +132,13 @@ impl<'a, S: 'a> MessageDispatcher<'a, S> {
     }
 
     /// Register a new receiver and callback.
-    pub fn register<T: Send + 'static>(&mut self, receiver: Receiver<T>, callback: Box<dyn Fn(T, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
+    pub fn register<T: Send + 'static>(&mut self, receiver: Receiver<T>, callback: HandlerFn<'a, T, S>) {
         let handler = TypedMessageHandler::new(receiver, callback);
         self.message_handlers.push(Box::new(handler));
     }
 
     /// Register a new [SystemPort] and callback.
-    pub fn register_system_port<M: Clone + Send + Sync + 'static>(&mut self, system_port: &SystemPort<M>, callback: Box<dyn Fn(M, &mut S) -> Result<HandlerStatus> + Send + 'a>) {
+    pub fn register_system_port<M: Clone + Send + Sync + 'static>(&mut self, system_port: &SystemPort<M>, callback: HandlerFn<'a, M, S>) {
         self.register(system_port.receiver().clone(), callback);
     }
 
@@ -161,6 +171,12 @@ impl<'a, S: 'a> MessageDispatcher<'a, S> {
     }
 }
 
+impl<'a, S: 'a> Default for MessageDispatcher<'a, S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The return status of a callback function from [MessageDispatcher].
 pub enum HandlerStatus {
     /// The callback was successfully executed.
@@ -184,11 +200,11 @@ trait MessageHandler<S>: Send {
 
 struct TypedMessageHandler<'a, T, S> {
     receiver: Receiver<T>,
-    callback: Box<dyn Fn(T, &mut S) -> Result<HandlerStatus> + Send + 'a>,
+    callback: HandlerFn<'a, T, S>,
 }
 
 impl<'a, T, S> TypedMessageHandler<'a, T, S> {
-    fn new(receiver: Receiver<T>, handler: Box<dyn Fn(T, &mut S) -> Result<HandlerStatus> + Send + 'a>) -> Self {
+    fn new(receiver: Receiver<T>, handler: HandlerFn<'a, T, S>) -> Self {
         Self { receiver, callback: handler }
     }
 }
@@ -214,7 +230,7 @@ impl<'a, T: Send + 'static, S> MessageHandler<S> for TypedMessageHandler<'a, T, 
 
 // Logging
 
-/// A log entry with severity (see [LogLevel]), timestamp and message.
+/// A log entry with severity (see `LogLevelDTO`), timestamp and message.
 #[derive(Clone, Debug)]
 pub struct LogEntry {
     /// The log severity level.

@@ -44,7 +44,7 @@ pub struct MuxComponent {
 }
 
 #[derive(Clone, Debug)]
-struct MultiplexedGroup<M: Clone + Send + Sync + 'static> {
+pub struct MultiplexedGroup<M: Clone + Send + Sync + 'static> {
     common: SystemPort<M>,
     channels: Vec<Option<SystemPort<M>>>,
 }

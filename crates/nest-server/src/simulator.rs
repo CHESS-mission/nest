@@ -167,7 +167,7 @@ impl Simulator {
         self.state.to_status_update()
     }
 
-    /// Return a reference to the currently loaded [Topology]. Fails if the simulation is not ready
+    /// Return a reference to the currently loaded [TopologySpec]. Fails if the simulation is not ready
     /// or running.
     pub fn topology(&self) -> Result<&TopologySpec, SimulatorError> {
         match &self.state {
@@ -183,5 +183,11 @@ impl Simulator {
             SimulatorState::Running { simulation, .. } => Ok(simulation.started_at()),
             _ => Err(SimulatorError::NotRunning),
         }
+    }
+}
+
+impl Default for Simulator {
+    fn default() -> Self {
+        Self::new()
     }
 }

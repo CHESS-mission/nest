@@ -166,7 +166,7 @@ pub fn start_uart_backend(uart_ports: Vec<UartPort>, logger: Logger) -> UartBack
                 Ok(())
             })()
             .inspect_err(|e: &UartError| {
-                let _ = logger.error(format!("UartBackend error: {}", e.to_string()));
+                let _ = logger.error(format!("UartBackend error: {e}"));
             })
         });
 
@@ -185,7 +185,7 @@ pub fn start_uart_backend(uart_ports: Vec<UartPort>, logger: Logger) -> UartBack
                     match rx_to_backend.recv_timeout(Duration::from_millis(100)) {
                         Ok(msg) => {
                             let streams = shared_streams.lock().map_err(|_| UartError::AcquireLockFailed)?;
-                            let mut stream = streams.get(msg.port).ok_or_else(|| UartError::PortOutOfRange(msg.port))?;
+                            let mut stream = streams.get(msg.port).ok_or(UartError::PortOutOfRange(msg.port))?;
                             stream.write_all(&msg.data).map_err(|_| UartError::WriteError)?;
                         }
                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
@@ -196,7 +196,7 @@ pub fn start_uart_backend(uart_ports: Vec<UartPort>, logger: Logger) -> UartBack
                 Ok(())
             })()
             .inspect_err(|e: &UartError| {
-                let _ = logger.error(format!("UartBackend error: {}", e.to_string()));
+                let _ = logger.error(format!("UartBackend error: {e}"));
             })
         });
 

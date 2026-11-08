@@ -16,7 +16,6 @@ use std::{
     slice::from_raw_parts,
     sync::{Arc, Mutex, RwLock},
     thread::{JoinHandle, spawn},
-    usize,
 };
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -179,7 +178,7 @@ impl VhostUserGpioBackend {
                     {
                         let mut gpio_lines = gpio_lines.lock().unwrap();
                         let gpio_line = gpio_lines.get_mut(line as usize)
-                            .ok_or_else(|| GpioError::GpioLineInvalid(line))?;
+                            .ok_or(GpioError::GpioLineInvalid(line))?;
                         
                         // Check for matching interrupt
                         let irq_triggered = match gpio_line.irq_type {
@@ -288,12 +287,12 @@ impl VhostUserGpioBackend {
                     }
                     VIRTIO_GPIO_MSG_SET_IRQ_TYPE => {
                         let irq_type = request.value.to_native() as u8;
-                        if irq_type == VIRTIO_GPIO_IRQ_TYPE_NONE {
-                            if let Some(res) = &gpio_line.irq_reservation {
-                                // Cancel reservation
-                                Self::send_event_response(&res.vring, &res.desc_chain, res.addr, VIRTIO_GPIO_IRQ_STATUS_INVALID)?;
-                                gpio_line.irq_reservation = None;
-                            }
+                        if irq_type == VIRTIO_GPIO_IRQ_TYPE_NONE
+                            && let Some(res) = &gpio_line.irq_reservation
+                        {
+                            // Cancel reservation
+                            Self::send_event_response(&res.vring, &res.desc_chain, res.addr, VIRTIO_GPIO_IRQ_STATUS_INVALID)?;
+                            gpio_line.irq_reservation = None;
                         }
                         gpio_line.irq_type = irq_type;
                         gpio_line.irq_latched = false;
@@ -364,7 +363,7 @@ impl VhostUserGpioBackend {
     ) -> Result<()> {
         let mut gpio_lines = self.gpio_lines.lock().unwrap();
         let gpio_line = gpio_lines.get_mut(gpio as usize)
-            .ok_or_else(|| GpioError::GpioLineInvalid(gpio))?;
+            .ok_or(GpioError::GpioLineInvalid(gpio))?;
 
         // Interrupt should be enabled before sending buffer and no other buffer
         // should have been received earlier for this GPIO pin.
@@ -647,7 +646,7 @@ pub fn start_gpio_backend<P: AsRef<Path>>(gpio_socket: P, gpio_lines: Vec<GpioLi
             Ok(())
         })()
         .inspect_err(|e: &GpioError| {
-            let _ = logger.error(format!("UartBackend error: {}", e.to_string()));
+            let _ = logger.error(format!("UartBackend error: {e}"));
         })
     });
 

@@ -158,10 +158,10 @@ impl Component for QemuComponent {
             dispatcher.register(command_receiver, Box::new(|msg, state| {
                 match msg {
                     ComponentHandleCommand::Stop => {
-                        logger.info(format!("Stopping Qemu instance"))?;
+                        logger.info("Stopping Qemu instance")?;
                         state.qemu_instance.quit()?;
                         state.qemu_instance.wait()?;
-                        logger.info(format!("Qemu instance stopped"))?;
+                        logger.info("Qemu instance stopped")?;
                         return Ok(HandlerStatus::Stop)
                     },
                     ComponentHandleCommand::StartStatusUpdates => state.update_status = true,

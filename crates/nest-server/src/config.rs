@@ -4,7 +4,7 @@ use std::{net::{SocketAddr, ToSocketAddrs}, path::PathBuf};
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 pub struct Config {
-    /// Address to bind, e.g. 127.0.0.1:8080 or [::1]:3000
+    /// Address to bind, e.g. 127.0.0.1:8080 or `[::1]:3000`
     #[arg(short, long,
         env = "NEST_SOCKET_ADDR",
         value_name = "ADDRESS",

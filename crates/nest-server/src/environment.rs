@@ -32,7 +32,6 @@ impl From<Infallible> for EnvVarError {
 /// - [Vec3Var]
 /// - [QuaternionVar]
 /// - [TensorVar]
-
 pub type IntVar = i32;
 pub type FloatVar = f32;
 pub type BoolVar = bool;

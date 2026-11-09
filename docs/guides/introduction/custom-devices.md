@@ -1,5 +1,5 @@
 ---
-icon: lucide/scan-box
+icon: lucide/file-box
 ---
 
 # Writing custom devices

@@ -7,6 +7,34 @@ site_author = "EPFL Spacecraft Team"
 repo_url = "https://github.com/CHESS-mission/nest"
 repo_name = "CHESS-mission/nest"
 
+nav = [
+  { "Home" = "index.md" },
+  { "Learn" = [
+    { "Concepts" = [
+      "learn/concepts/topology.md",
+      "learn/concepts/scenarios.md",
+    ] },
+  ] },
+  { "Guides" = [
+    "guides/index.md",
+    { "Introduction" = [
+      "guides/introduction/index.md",
+      "guides/introduction/running-vms.md",
+      "guides/introduction/custom-devices.md",
+      "guides/introduction/scenarios.md",
+    ] },
+  ] },
+  { "Reference" = [
+    "reference/topology.md",
+    "reference/client-protocol.md",
+    { "Components" = [
+      "reference/components/qemu.md",
+      "reference/components/wasm.md",
+      "reference/components/mux.md",
+    ] },
+  ] },
+]
+
 [project.theme]
 language = "en"
 font.code = "JetBrains Mono"

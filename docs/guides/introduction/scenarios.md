@@ -29,14 +29,14 @@ scenario to make sure our system works as expected.
 ## Introduction
 
 We will simulate a system in which a script in our Alpine Linux VM (from
-[Running VMs](./1-running-vms.md)) continuously reads the temperature from an
+[Running VMs](./running-vms.md)) continuously reads the temperature from an
 instance of our LM75A I2C sensor, and turns on an instance of our LED component
-(both from [Writing Custom Devices](./2-custom-devices.md)) when the
-temperature is above 80 °C. We will also add a feature of the LM75A sensor to
-simulate a malfunction. Finally, we will write a scenario to automatically
-verify that the LED is turned on only when the temperature is above the
-threshold, and that when the LM75A sensor fails, the LED doesn't turn on
-despite the temperature being above the threshold.
+(both from [Writing Custom Devices](./custom-devices.md)) when the temperature
+is above 80 °C. We will also add a feature of the LM75A sensor to simulate a
+malfunction. Finally, we will write a scenario to automatically verify that the
+LED is turned on only when the temperature is above the threshold, and that
+when the LM75A sensor fails, the LED doesn't turn on despite the temperature
+being above the threshold.
 
 ## The topology
 

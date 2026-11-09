@@ -83,3 +83,19 @@ You may also directly pass arguments to NEST by appending them to the command.
 ```bash
 docker run --rm -p 3000:3000 --shm-size=2g nest-server:latest --help
 ```
+
+## Citing NEST (BibTeX)
+
+```bibtex
+@inproceedings{NEST,
+    editor       = {Detrell, Gisela;Messina, Vincenzo;García Alarcia, Ramón María;Kinnaird, Alexander},
+    author       = {Felber, Nathan and Fiszbin, Vincent and Noublanche, Hugo and De Zen, Alessandro and Sandoz, Quentin and Anastassova, Emma},
+    title        = {NEST: A Modular Framework for Reproducible Software-in-the-Loop Testing of Spacecraft Systems},
+    booktitle    = {Proceedings of the 5th Symposium on Space Educational Activities (SSEA)},
+    year         = {2026},
+    publisher    = {Technical University of Munich (TUM)},
+    organization = {Technical University of Munich (TUM) and European Space Agency (ESA)},
+    doi          = {10.14459/2026md1857626},
+    language     = {en},
+}
+```

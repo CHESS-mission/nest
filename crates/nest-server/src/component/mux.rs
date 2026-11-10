@@ -46,11 +46,11 @@ pub struct MuxComponent {
 #[derive(Clone, Debug)]
 pub struct MultiplexedGroup<M: Clone + Send + Sync + 'static> {
     common: SystemPort<M>,
-    channels: Vec<Option<SystemPort<M>>>,
+    channels: Vec<SystemPort<M>>,
 }
 
 impl<M: Clone + Send + Sync + 'static> MultiplexedGroup<M> {
-    fn new(common: SystemPort<M>, channels: Vec<Option<SystemPort<M>>>) -> Self {
+    fn new(common: SystemPort<M>, channels: Vec<SystemPort<M>>) -> Self {
         Self { common, channels }
     }
 }
@@ -91,22 +91,18 @@ impl Component for MuxComponent {
                 with_message_wrapper!(AnyMultiplexedGroup, group, |group| {
                     // Register common port handler
                     dispatcher.register_system_port(&group.common, Box::new(move |msg, state| {
-                        if let Some(channel) = &group.channels[state.select as usize] {
-                            channel.send(msg);
-                        }
+                        group.channels[state.select as usize].send(msg);
                         Ok(HandlerStatus::Ok)
                     }));
 
                     // Register channel port handlers
                     for (i, channel) in group.channels.iter().enumerate() {
-                        if let Some(channel) = channel {
-                            dispatcher.register_system_port(channel, Box::new(move |msg, state| {
-                                if state.select as usize == i {
-                                    group.common.send(msg);
-                                }
-                                Ok(HandlerStatus::Ok)
-                            }));
-                        }
+                        dispatcher.register_system_port(channel, Box::new(move |msg, state| {
+                            if state.select as usize == i {
+                                group.common.send(msg);
+                            }
+                            Ok(HandlerStatus::Ok)
+                        }));
                     }
                 });
             }
@@ -135,23 +131,24 @@ impl Component for MuxComponent {
                 bail!("Every multiplexed port must have exactly 2 channels");
             }
 
-            if let Some(common_port) = params.system_ports.remove(&group.common) {
-                with_message_wrapper!(AnySystemPort, common_port, |common_port| {
-                    let channels = group.channels.iter()
-                        .map(|channel| {
-                            params.system_ports.remove(channel)
-                                .map(|port| port.try_into().map_err(|_| anyhow::anyhow!("Common and channel port types must match")))
-                                .transpose()
-                        })
-                        .collect::<anyhow::Result<_>>()?;
-                    comp.multiplexed_ports.push(MultiplexedGroup::new(common_port, channels).into());
-                });
-            } else {
-                // Remove channels if no common
-                for channel in &group.channels {
-                    params.system_ports.remove(channel);
-                }
-            }
+            let Some(common_port) = params.system_ports.remove(&group.common) else {
+                bail!("Multiplexed port {} is not declared as a system port of this component", group.common);
+            };
+
+            with_message_wrapper!(AnySystemPort, common_port, |common_port| {
+                let channels = group.channels.iter()
+                    .map(|channel| {
+                        let Some(port) = params.system_ports.remove(channel) else {
+                            bail!("Channel port {} of multiplexed port {} is not declared as a system port",
+                                channel, group.common);
+                        };
+                        let converted: SystemPort<M> = port.try_into()
+                            .map_err(|_| anyhow!("Common and channel port types must match"))?;
+                        Ok(converted)
+                    })
+                    .collect::<anyhow::Result<_>>()?;
+                comp.multiplexed_ports.push(MultiplexedGroup::new(common_port, channels).into());
+            });
         }
 
         if let Some(port) = params.system_ports.remove("select") {

@@ -54,6 +54,18 @@ impl<M: Clone + Send + Sync + 'static> Default for SystemPortBuilder<M> {
 any_message_enum!(AnySystemPortBuilder, SystemPortBuilder);
 
 impl AnySystemPortBuilder {
+    /// Name of the message type the port carries, as used in topology files.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            AnySystemPortBuilder::Int(_) => "int",
+            AnySystemPortBuilder::Float(_) => "float",
+            AnySystemPortBuilder::Bool(_) => "bool",
+            AnySystemPortBuilder::Bytes(_) => "bytes",
+            AnySystemPortBuilder::Text(_) => "text",
+            AnySystemPortBuilder::I2c(_) => "i2c",
+        }
+    }
+
     /// Connect the port to another [AnySystemPortBuilder]. Fails if the underlying ports are of
     /// different types.
     ///

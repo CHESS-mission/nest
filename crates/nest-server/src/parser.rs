@@ -9,22 +9,31 @@ use error::*;
 
 use specs::*;
 
+/// Errors raised when a topology field has an unexpected shape.
+fn invalid<S: Into<String>>(msg: S) -> ParserError {
+    ParserError::ValidationError(msg.into())
+}
+
 impl TopologySpec {
     pub fn from_yaml(yaml: &str) -> Result<Self, ParserError> {
-        match YamlLoader::load_from_str(yaml) {
-            Ok(doc) => match doc.last() {
-                Some(yaml) => parse_topology(yaml),
-                None => Err(ParserError::InvalidFormat),
-            },
-            Err(_) => Err(ParserError::InvalidFormat),
+        let docs = match YamlLoader::load_from_str(yaml) {
+            Ok(docs) => docs,
+            Err(_) => return Err(ParserError::InvalidFormat),
+        };
+
+        match docs.as_slice() {
+            [doc] => parse_topology(doc),
+            // An empty file (or comments only) is an empty document
+            [] => parse_topology(&Yaml::Null),
+            _ => Err(invalid("a topology must contain a single YAML document")),
         }
     }
 
     pub fn from_yaml_file(file: &PathBuf) -> Result<Self, ParserError> {
-        Self::from_yaml(match &fs::read_to_string(file) {
-            Ok(r) => r,
-            Err(_) => return Err(ParserError::InvalidFormat),
-        }) 
+        match fs::read_to_string(file) {
+            Ok(yaml) => Self::from_yaml(&yaml),
+            Err(e) => Err(ParserError::ReadError(file.clone(), e)),
+        }
     }
 }
 
@@ -33,26 +42,24 @@ impl TopologySpec {
 ///
 fn parse_topology(root: &Yaml) -> Result<TopologySpec, ParserError> {
     let mut environement_variables: Vec<EnvironmentVarSpec> = Vec::new();
-    if let Some(env_vars) = root["environment_variables"].as_vec() {
-        for env_var in env_vars {
-            environement_variables.push(parse_environment_variable(env_var)?)
-        }
+    for env_var in optional_list(root, "environment_variables", "environment_variables")? {
+        environement_variables.push(parse_environment_variable(env_var)?)
     }
 
-    let comps = root["components"]
-        .as_vec()
-        .ok_or(ParserError::MissingField("components"))?;
-
     let mut all_components: Vec<ComponentSpec> = Vec::new();
-    for comp in comps {
-        all_components.push(parse_component(comp)?);
+    match field(root, "components") {
+        None => return Err(ParserError::MissingField("components")),
+        Some(Yaml::Array(comps)) => {
+            for comp in comps {
+                all_components.push(parse_component(comp)?);
+            }
+        }
+        Some(_) => return Err(invalid("components must be a list")),
     }
 
     let mut connected_wires: Vec<WireSpec> = Vec::new();
-    if let Some(wires) = root["wires"].as_vec() {
-        for wire in wires {
-            connected_wires.push(parse_wire_endpoints(wire)?);
-        }
+    for wire in optional_list(root, "wires", "wires")? {
+        connected_wires.push(parse_wire_endpoints(wire)?);
     }
 
     Ok(TopologySpec::new(
@@ -62,57 +69,96 @@ fn parse_topology(root: &Yaml) -> Result<TopologySpec, ParserError> {
     ))
 }
 
+/// The value of `key` in `node`, if the key is present and non-null.
+fn field<'a>(node: &'a Yaml, key: &str) -> Option<&'a Yaml> {
+    match &node[key] {
+        Yaml::BadValue | Yaml::Null => None,
+        other => Some(other),
+    }
+}
+
+/// An optional list of nodes, validated to be a list when present.
+fn optional_list<'a>(node: &'a Yaml, key: &str, path: &str) -> Result<Vec<&'a Yaml>, ParserError> {
+    match field(node, key) {
+        None => Ok(Vec::new()),
+        Some(Yaml::Array(items)) => Ok(items.iter().collect()),
+        Some(_) => Err(invalid(format!("{path} must be a list"))),
+    }
+}
+
 // subfunctions
 
 // env
 fn parse_environment_variable(env_var: &Yaml) -> Result<EnvironmentVarSpec, ParserError> {
-    let name = env_var["name"]
-        .as_str()
-        .ok_or(ParserError::MissingField("environment_variable.name"))?;
-
-    let var_type = env_var["type"]
-        .as_str()
-        .ok_or(ParserError::MissingField("environment_variable.type"))?
-        .parse::<EnvPortTypeSpec>()?;
+    let name = required_str(env_var, "name", "environment_variables.name")?;
+    let var_type =
+        required_str(env_var, "type", "environment_variables.type")?.parse::<EnvPortTypeSpec>()?;
 
     Ok(EnvironmentVarSpec::new(name, var_type))
 }
 
 // components
 fn parse_component(comp: &Yaml) -> Result<ComponentSpec, ParserError> {
-    let name = comp["name"]
-        .as_str()
-        .ok_or(ParserError::MissingField("name"))?;
+    let name = required_str(comp, "name", "components.name")?;
 
     let mut config_map = serde_json::Map::new();
-    if let Some(cfg) = comp["config"].as_hash() {
+    if let Some(cfg) = field(comp, "config") {
+        let Yaml::Hash(cfg) = cfg else {
+            return Err(invalid(format!(
+                "components.config must be a mapping (got {})",
+                type_name(cfg)
+            )));
+        };
         for (k, v) in cfg {
-            if let Some(key) = yaml_key_to_string(k) {
-                config_map.insert(key.to_string(), yaml_to_json(v));
-            }
+            let Some(key) = yaml_key_to_string(k) else {
+                return Err(invalid(format!(
+                    "components.config keys must be scalars (got {})",
+                    type_name(k)
+                )));
+            };
+            config_map.insert(key, yaml_to_json(v));
         }
     }
     let config = serde_json::Value::Object(config_map);
 
     let mut system_ports: Vec<SystemPortSpec> = Vec::new();
-
-    if let Some(sys_ports) = comp["ports"]["system"].as_vec() {
-        for sys_port in sys_ports {
-            system_ports.push(parse_system_port(sys_port)?)
-        }
-    }
-
     let mut environment_ports: Vec<EnvironmentPortSpec> = Vec::new();
-    if let Some(env_ports) = comp["ports"]["environment"].as_vec() {
-        for env_port in env_ports {
-            environment_ports.push(parse_environment_port(env_port)?);
+
+    if let Some(ports) = field(comp, "ports") {
+        let Yaml::Hash(groups) = ports else {
+            return Err(invalid(format!(
+                "components.ports must be a mapping (got {})",
+                type_name(ports)
+            )));
+        };
+        for (k, v) in groups {
+            let Some(group) = yaml_key_to_string(k) else {
+                return Err(invalid(
+                    "components.ports groups must be strings".to_string(),
+                ));
+            };
+            match group.as_str() {
+                "system" => {
+                    for port in typed_list(v, "components.ports.system")? {
+                        system_ports.push(parse_system_port(port)?);
+                    }
+                }
+                "environment" => {
+                    for port in typed_list(v, "components.ports.environment")? {
+                        environment_ports.push(parse_environment_port(port)?);
+                    }
+                }
+                other => {
+                    return Err(invalid(format!(
+                        "Unknown ports group '{other}': expected 'system' or 'environment'"
+                    )));
+                }
+            }
         }
     }
 
-    let component_type = comp["type"]
-        .as_str()
-        .ok_or(ParserError::ValidationError("components must have a type"))?
-        .parse::<ComponentTypeSpec>()?;
+    let component_type =
+        required_str(comp, "type", "components.type")?.parse::<ComponentTypeSpec>()?;
 
     Ok(ComponentSpec::new(
         name,
@@ -123,74 +169,86 @@ fn parse_component(comp: &Yaml) -> Result<ComponentSpec, ParserError> {
     ))
 }
 
-// Although these two might seem similar, we will keep them seperate for the time being 
+// Although these two might seem similar, we will keep them seperate for the time being
 // as they do very different things.
 
 // env port
 fn parse_environment_port(env_port: &Yaml) -> Result<EnvironmentPortSpec, ParserError> {
-    let port_name = env_port["name"]
-        .as_str()
-        .ok_or(ParserError::MissingField("ports.environment.name"))?;
-
-    if port_name.trim().is_empty() {
-        return Err(ParserError::ValidationError(
-            "ports.environment.name cannot be empty",
-        ));
-    }
-
-    let var_name = env_port["variable"]
-        .as_str()
-        .ok_or(ParserError::MissingField("ports.environment.variable"))?;
-
-    let port_type = env_port["type"]
-        .as_str()
-        .ok_or(ParserError::MissingField("ports.environment.type"))?
-        .parse::<EnvPortTypeSpec>()?;
+    let port_name = required_str(env_port, "name", "ports.environment.name")?;
+    let var_name = required_str(env_port, "variable", "ports.environment.variable")?;
+    let port_type =
+        required_str(env_port, "type", "ports.environment.type")?.parse::<EnvPortTypeSpec>()?;
 
     Ok(EnvironmentPortSpec::new(port_name, var_name, port_type))
 }
 
 // sys port
 fn parse_system_port(sys_port: &Yaml) -> Result<SystemPortSpec, ParserError> {
-    let port_name = sys_port["name"]
-        .as_str()
-        .ok_or(ParserError::MissingField("ports.system.name"))?;
-
-    if port_name.trim().is_empty() {
-        return Err(ParserError::ValidationError(
-            "ports.system.name cannot be empty",
-        ));
-    }
-
-    let port_type = sys_port["type"]
-        .as_str()
-        .ok_or(ParserError::MissingField("ports.system.type"))?
-        .parse::<PortTypeSpec>()?;
+    let port_name = required_str(sys_port, "name", "ports.system.name")?;
+    let port_type = required_str(sys_port, "type", "ports.system.type")?.parse::<PortTypeSpec>()?;
 
     Ok(SystemPortSpec::new(port_name, port_type))
 }
 
-
 // wires
 fn parse_wire_endpoints(wire: &Yaml) -> Result<WireSpec, ParserError> {
-    let mut curr_wire: Vec<WireEndpointSpec> = Vec::new();
+    let endpoints = typed_list(wire, "wires")?;
 
-    if let Some(endpoints) = wire.as_vec() {
-        for endpoint in endpoints {
-            let component = endpoint["component"]
-                .as_str()
-                .ok_or(ParserError::MissingField("wires.component"))?;
-            let port = endpoint["port"]
-                .as_str()
-                .ok_or(ParserError::MissingField("wires.port"))?;
-            curr_wire.push(WireEndpointSpec::new(component, port))
-        }
+    if endpoints.len() < 2 {
+        return Err(invalid(
+            "every wire must connect at least two endpoints".to_string(),
+        ));
+    }
+
+    let mut curr_wire: Vec<WireEndpointSpec> = Vec::with_capacity(endpoints.len());
+    for endpoint in endpoints {
+        let component = required_str(endpoint, "component", "wires.component")?;
+        let port = required_str(endpoint, "port", "wires.port")?;
+        curr_wire.push(WireEndpointSpec::new(component, port))
     }
 
     Ok(WireSpec::new(curr_wire))
 }
 
 // helper functions
+/// A required, non-empty string field of a mapping node.
+fn required_str<'a>(node: &'a Yaml, key: &str, path: &'static str) -> Result<&'a str, ParserError> {
+    match &node[key] {
+        Yaml::BadValue | Yaml::Null => Err(ParserError::MissingField(path)),
+        Yaml::String(s) if s.trim().is_empty() => Err(invalid(format!("{path} cannot be empty"))),
+        Yaml::String(s) => Ok(s.as_str()),
+        other => Err(invalid(format!(
+            "{path} must be a string (got {})",
+            type_name(other)
+        ))),
+    }
+}
+
+/// An optional list of nodes, validated to be a list when given.
+fn typed_list<'a>(node: &'a Yaml, path: &str) -> Result<Vec<&'a Yaml>, ParserError> {
+    match node {
+        Yaml::Array(items) => Ok(items.iter().collect()),
+        other => Err(invalid(format!(
+            "{path} must be a list (got {})",
+            type_name(other)
+        ))),
+    }
+}
+
+/// Human-readable name of a YAML node's shape, for error messages.
+fn type_name(node: &Yaml) -> &'static str {
+    match node {
+        Yaml::Null => "null",
+        Yaml::Boolean(_) => "boolean",
+        Yaml::Integer(_) => "integer",
+        Yaml::Real(_) => "number",
+        Yaml::String(_) => "string",
+        Yaml::Array(_) => "list",
+        Yaml::Hash(_) => "mapping",
+        _ => "unknown type",
+    }
+}
+
 fn yaml_key_to_string(k: &Yaml) -> Option<String> {
     match k {
         Yaml::String(s) => Some(s.clone()),
@@ -253,7 +311,11 @@ impl FromStr for EnvPortTypeSpec {
             "vec3" => EnvPortTypeSpec::Vec3,
             "quaternion" => EnvPortTypeSpec::Quaternion,
             "tensor" => EnvPortTypeSpec::Tensor,
-            _ => return Err(ParserError::InvalidType("Unknown environment variable type")),
+            _ => {
+                return Err(ParserError::InvalidType(
+                    "Unknown environment variable type",
+                ))
+            }
         })
     }
 }
@@ -269,4 +331,3 @@ impl FromStr for ComponentTypeSpec {
         })
     }
 }
-

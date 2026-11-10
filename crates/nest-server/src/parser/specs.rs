@@ -1,5 +1,6 @@
 use nest_api::{
-    ComponentDTO, ComponentTypeDTO, EnvPortTypeDTO, EnvironmentVarDTO, PortTypeDTO, SystemPortDTO, TopologyDTO, WireDTO, WireEndpointDTO
+    ComponentDTO, ComponentTypeDTO, EnvPortTypeDTO, EnvironmentVarDTO, PortTypeDTO, SystemPortDTO,
+    TopologyDTO, WireDTO, WireEndpointDTO,
 };
 
 #[derive(Clone, Debug)]
@@ -41,7 +42,10 @@ pub struct EnvironmentVarSpec {
 
 impl EnvironmentVarSpec {
     pub fn new<S: Into<String>>(name: S, var_type: EnvPortTypeSpec) -> Self {
-        Self { name: name.into(), var_type }
+        Self {
+            name: name.into(),
+            var_type,
+        }
     }
 }
 
@@ -108,7 +112,7 @@ impl From<ComponentTypeSpec> for ComponentTypeDTO {
     }
 }
 
-pub enum PortSpec{
+pub enum PortSpec {
     SystemPortSpec,
     EnvironmentPortSpec,
 }
@@ -145,12 +149,20 @@ pub struct EnvironmentPortSpec {
 }
 
 impl EnvironmentPortSpec {
-    pub fn new<N: Into<String>, V: Into<String>>(name: N, var_name: V, port_type: EnvPortTypeSpec) -> Self {
-        Self { name: name.into(), var_name: var_name.into(), port_type }
+    pub fn new<N: Into<String>, V: Into<String>>(
+        name: N,
+        var_name: V,
+        port_type: EnvPortTypeSpec,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            var_name: var_name.into(),
+            port_type,
+        }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PortTypeSpec {
     Int,
     Float,
@@ -158,6 +170,20 @@ pub enum PortTypeSpec {
     Bytes,
     Text,
     I2c,
+}
+
+impl PortTypeSpec {
+    /// Name of the type as used in topology files.
+    pub fn name(&self) -> &'static str {
+        match self {
+            PortTypeSpec::Int => "int",
+            PortTypeSpec::Float => "float",
+            PortTypeSpec::Bool => "bool",
+            PortTypeSpec::Bytes => "bytes",
+            PortTypeSpec::Text => "text",
+            PortTypeSpec::I2c => "i2c",
+        }
+    }
 }
 
 impl From<PortTypeSpec> for PortTypeDTO {
@@ -173,7 +199,7 @@ impl From<PortTypeSpec> for PortTypeDTO {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum EnvPortTypeSpec {
     Int,
     Float,
@@ -182,6 +208,21 @@ pub enum EnvPortTypeSpec {
     Vec3,
     Quaternion,
     Tensor,
+}
+
+impl EnvPortTypeSpec {
+    /// Name of the type as used in topology files.
+    pub fn name(&self) -> &'static str {
+        match self {
+            EnvPortTypeSpec::Int => "int",
+            EnvPortTypeSpec::Float => "float",
+            EnvPortTypeSpec::Bool => "bool",
+            EnvPortTypeSpec::Vec2 => "vec2",
+            EnvPortTypeSpec::Vec3 => "vec3",
+            EnvPortTypeSpec::Quaternion => "quaternion",
+            EnvPortTypeSpec::Tensor => "tensor",
+        }
+    }
 }
 
 impl From<EnvPortTypeSpec> for EnvPortTypeDTO {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Instant};
+use std::{collections::{HashMap, HashSet}, time::Instant};
 
 use anyhow::{Result, bail};
 use crossbeam_channel::{Receiver, Select, TryRecvError};
@@ -19,27 +19,58 @@ pub struct SimulationBuilder {
 
 impl SimulationBuilder {
     pub fn from_topology(topology: &TopologySpec) -> Result<Self> {
+        // Component names must be unique, otherwise they silently shadow each other
+        let mut component_names: HashSet<&str> = HashSet::new();
+        for comp in &topology.components {
+            if !component_names.insert(comp.name.as_str()) {
+                bail!("Duplicate component name: {}", comp.name);
+            }
+        }
+
+        // Environment variable names must be unique as well
+        let mut env_var_types: HashMap<&str, &EnvPortTypeSpec> = HashMap::new();
+        for env_var in &topology.environment {
+            if env_var_types
+                .insert(env_var.name.as_str(), &env_var.var_type)
+                .is_some()
+            {
+                bail!("Duplicate environment variable name: {}", env_var.name);
+            }
+        }
+
         // Create system ports
         let mut system_ports: HashMap<String, HashMap<String, AnySystemPortBuilder>> = HashMap::new();
         for comp in &topology.components {
-            system_ports.insert(comp.name.clone(), comp.system_ports
-                .iter()
-                .map(|port| (port.name.to_owned(), match port.port_type {
+            let mut comp_ports: HashMap<String, AnySystemPortBuilder> = HashMap::new();
+            for port in &comp.system_ports {
+                let builder = match port.port_type {
                     PortTypeSpec::Int => AnySystemPortBuilder::Int(SystemPortBuilder::default()),
                     PortTypeSpec::Float => AnySystemPortBuilder::Float(SystemPortBuilder::default()),
                     PortTypeSpec::Bool => AnySystemPortBuilder::Bool(SystemPortBuilder::default()),
                     PortTypeSpec::Bytes => AnySystemPortBuilder::Bytes(SystemPortBuilder::default()),
                     PortTypeSpec::Text => AnySystemPortBuilder::Text(SystemPortBuilder::default()),
                     PortTypeSpec::I2c => AnySystemPortBuilder::I2c(SystemPortBuilder::default()),
-                }))
-                .collect()
-            );
+                };
+                if comp_ports.insert(port.name.clone(), builder).is_some() {
+                    bail!(
+                        "Duplicate port name {} in component {}",
+                        port.name, comp.name
+                    );
+                }
+            }
+            system_ports.insert(comp.name.clone(), comp_ports);
         }
 
         // Connect ports
+        let mut connections: HashSet<(String, String)> = HashSet::new();
         for wire in &topology.wires {
             for (i, endpoint1) in wire.endpoints.iter().enumerate() {
                 for endpoint2 in &wire.endpoints[i + 1..] {
+                    if endpoint1.component == endpoint2.component {
+                        bail!("All endpoints of a wire must belong to different components, \
+                            but component {} appears twice in the same wire", endpoint1.component);
+                    }
+
                     let [comp1_opt, comp2_opt] = system_ports.get_disjoint_mut([
                         &endpoint1.component,
                         &endpoint2.component,
@@ -58,6 +89,20 @@ impl SimulationBuilder {
                     let Some(port2) = comp2.get_mut(&endpoint2.port) else {
                         bail!("Use of undeclared port {} of component {} in wire.", endpoint2.port, endpoint2.component);
                     };
+
+                    if port1.type_name() != port2.type_name() {
+                        bail!("Cannot wire {}.{} (type {}) to {}.{} (type {}): wired ports must have the same type",
+                            endpoint1.component, endpoint1.port, port1.type_name(),
+                            endpoint2.component, endpoint2.port, port2.type_name());
+                    }
+
+                    // Connect both directions, but only once per pair of ports
+                    let a = format!("{}.{}", endpoint1.component, endpoint1.port);
+                    let b = format!("{}.{}", endpoint2.component, endpoint2.port);
+                    let pair = if a <= b { (a, b) } else { (b, a) };
+                    if !connections.insert(pair.clone()) {
+                        bail!("Duplicate wire between {} and {}", pair.0, pair.1);
+                    }
 
                     port1.connect_to(port2)?;
                     port2.connect_to(port1)?;
@@ -96,12 +141,28 @@ impl SimulationBuilder {
             }
 
             // Create environment ports
+            let mut env_port_names: HashSet<&str> = HashSet::new();
             for env_port in &comp.environment_ports {
-                if let Some(env_var) = environment.get(&env_port.var_name) {
-                    params.add_env_port(env_port.name.clone(), AnyEnvironmentPort::from(env_var.clone()));
-                } else {
-                    bail!("No matching environment variable name for port {}.{}: {}", comp.name, env_port.name, env_port.var_name);
+                if !env_port_names.insert(env_port.name.as_str()) {
+                    bail!(
+                        "Duplicate environment port name {} in component {}",
+                        env_port.name, comp.name
+                    );
                 }
+
+                let Some(var_type) = env_var_types.get(env_port.var_name.as_str()) else {
+                    bail!("No matching environment variable name for port {}.{}: {}", comp.name, env_port.name, env_port.var_name);
+                };
+
+                if *var_type != &env_port.port_type {
+                    bail!("Type mismatch for environment port {}.{}: variable {} is of type {}, but the port is declared as type {}",
+                        comp.name, env_port.name, env_port.var_name, var_type.name(), env_port.port_type.name());
+                }
+
+                let Some(env_var) = environment.get(&env_port.var_name) else {
+                    bail!("No matching environment variable name for port {}.{}: {}", comp.name, env_port.name, env_port.var_name);
+                };
+                params.add_env_port(env_port.name.clone(), AnyEnvironmentPort::from(env_var.clone()));
             }
 
             match comp.component_type {

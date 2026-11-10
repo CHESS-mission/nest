@@ -140,7 +140,7 @@ macro_rules! with_env_var_wrapper {
             }
             $any_type::Vec3($wrapper) => {
                 #[allow(dead_code)]
-                type M = $crate::environment::Vec2Var;
+                type M = $crate::environment::Vec3Var;
                 $body
             }
             $any_type::Quaternion($wrapper) => {

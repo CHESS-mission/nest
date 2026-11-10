@@ -35,6 +35,10 @@ nav = [
   ] },
 ]
 
+extra_css = [
+  "stylesheets/extra.css",
+]
+
 [project.theme]
 language = "en"
 font.code = "JetBrains Mono"

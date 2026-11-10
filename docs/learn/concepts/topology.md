@@ -46,7 +46,7 @@ system port.
 Finally, system ports are typed. This means that only ports of the same type can
 be wired together. Currently, NEST supports the following system port types:
 
-- **Integer:** 32-bit unsigned integer number
+- **Integer:** 32-bit signed integer number
 - **Float:** 32-bit floating point number
 - **Boolean:** simple boolean value
 - **String:** string of characters
@@ -107,7 +107,7 @@ The point of environment variables is that they can be controlled from outside
 the simulation, like [commands](#commands-events), to realize specific
 scenarios. The supported environment variable types are:
 
-- **Integer:** 32-bit unsigned integer number
+- **Integer:** 32-bit signed integer number
 - **Float:** 32-bit floating point number
 - **Boolean:** simple boolean value
 - **2D vector:** 2-dimensional floating point vector

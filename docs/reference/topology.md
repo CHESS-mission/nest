@@ -340,9 +340,8 @@ from different ports.
 
 Loading a topology runs the checks below: the parser first, then the simulation
 builder. Any failure aborts loading, leaves the previously loaded topology in
-place, and is reported in the server's own logs (a client only sees an unchanged
-status; see [Client protocol](./client-protocol.md#errors-and-edge-cases)). When
-the topology is given with `--topology`, an error aborts the server instead.
+place, and is reported in the server's own logs. When the topology is given
+with `--topology`, an error aborts the server instead.
 
 | Checked                                                  | Error                                                       |
 |----------------------------------------------------------|--------------------------------------------------------------|

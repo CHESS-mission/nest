@@ -320,3 +320,40 @@ world temp_sensor {
     Timers cannot be cancelled. Expiring timers must be identified by their ID
     in `on-timeout`, so that stale timers are ignored, and repeating behavior
     must reschedule itself from within the callback.
+
+## Host calls
+
+A device can call the functions NEST provides, and nothing else: the interfaces
+of the `nest:plugin` package, and the imports of its own ports.
+
+??? info "Why components import more than they can call"
+
+    Toolchains emit imports for interfaces the code may never reach, WASI in
+    particular. A component built for the `wasm32-wasip2` target, whatever the
+    language it is written in, imports most of `wasi:cli`, `wasi:io` and
+    `wasi:clocks` because its standard library and the adapter reference them.
+    Since such imports are impossible to get rid of and harmless when unused,
+    NEST accepts components which carry them, and only the code paths which do
+    call one of them fail.
+
+In practice, the following common operations are therefore unavailable to a
+device:
+
+| Operation                                              | Interface it reaches     | Use instead                                  |
+|--------------------------------------------------------|--------------------------|----------------------------------------------|
+| Printing (`println!`, `printf`)                        | `wasi:cli/stdout`        | `log.info`, `log.warning`, `log.error`       |
+| Reading environment variables or arguments             | `wasi:cli/environment`   | the options passed to `init`                 |
+| Exiting the process                                    | `wasi:cli/exit`          | return an error from `init`                  |
+| Reading the time, sleeping, waiting on I/O             | `wasi:clocks`, `wasi:io` | `get-time`, and `set-timer` to wake up later |
+| Reading or writing files                               | `wasi:filesystem`        | there is no storage available                |
+| Drawing random numbers                                 | `wasi:random`            | an option, or an environment port            |
+
+The trapped call logs an error which names the import it reached:
+
+```text
+Failed to call export i2c-in: error while executing at wasm backtrace:
+    0:     0x2f1 - lm75a!<wasm function 61>: wasi:clocks/monotonic-clock@0.2.12#now
+       is not implemented by the NEST host: devices can only call the interfaces of
+       the nest:plugin package, and imports of other interfaces, such as WASI,
+       always trap
+```

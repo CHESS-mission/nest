@@ -113,10 +113,12 @@ impl Component for WasmComponent {
             );
             let mut store = Store::new(&engine, host_ctx);
             let mut linker = Linker::new(&engine);
-
-            // Make imports trap by default
-            linker.define_unknown_imports_as_traps(&component)?;
             linker.allow_shadowing(true);
+
+            // Make imports trap by default, and replace the traps of imports
+            // which NEST cannot implement by ones naming the import.
+            linker.define_unknown_imports_as_traps(&component)?;
+            define_named_import_traps(&engine, &mut linker, &component);
 
             // Add host WIT interfaces to linker
             NestComponent::add_to_linker::<HostCtx, HasSelf<_>>(&mut linker, |ctx| ctx)?;
@@ -158,10 +160,10 @@ impl Component for WasmComponent {
 
                     dispatcher.register_system_port(port, Box::new(move |msg, state| {
                         if let Err(e) = port_in.call(&mut state.store, (msg.into_wit(),)) {
-                            logger.error(format!("Failed to call export {}: {}", export_name, e))?;
+                            logger.error(format!("Failed to call export {}: {:#}", export_name, e))?;
                         }
                         if let Err(e) = port_in.post_return(&mut state.store) {
-                            logger.error(format!("Post return failed for {}: {}", export_name, e))?;
+                            logger.error(format!("Post return failed for {}: {:#}", export_name, e))?;
                         }
 
                         Ok(HandlerStatus::Ok)
@@ -174,10 +176,10 @@ impl Component for WasmComponent {
                 let logger = &logger;
                 dispatcher.register(timeout_scheduler_handle.timeout_rx.clone(), Box::new(move |msg, state| {
                     if let Err(e) = on_timeout.call(&mut state.store, (msg.id,)) {
-                        logger.error(format!("Failed to call export on-timeout: {}", e))?;
+                        logger.error(format!("Failed to call export on-timeout: {:#}", e))?;
                     }
                     if let Err(e) = on_timeout.post_return(&mut state.store) {
-                        logger.error(format!("Post return failed for on-timeout: {}", e))?;
+                        logger.error(format!("Post return failed for on-timeout: {:#}", e))?;
                     }
 
                     Ok(HandlerStatus::Ok)
@@ -222,5 +224,73 @@ impl Component for WasmComponent {
         }
 
         Ok(comp)
+    }
+}
+
+// Import traps
+
+/// Return whether an imported item can be replaced by traps naming it
+fn import_is_stubable(engine: &Engine, item: &wasmtime::component::types::ComponentItem) -> bool {
+    use wasmtime::component::types::ComponentItem as Item;
+    match item {
+        Item::ComponentFunc(_) | Item::Resource(_) | Item::Type(_) => true,
+        Item::ComponentInstance(i) => i
+            .exports(engine)
+            .all(|(_, item)| import_is_stubable(engine, &item)),
+        _ => false,
+    }
+}
+
+/// Replace the traps of imports which NEST does not implement by traps which
+/// name the import they stand for, and say why it is not implemented.
+fn define_named_import_traps<T: Send + Sync + 'static>(
+    engine: &Engine,
+    linker: &mut Linker<T>,
+    component: &wasmtime::component::Component,
+) {
+    use wasmtime::component::types::ComponentItem as Item;
+
+    fn stub<'a, T: Send + Sync + 'a>(
+        engine: &Engine,
+        linker: &mut LinkerInstance<'a, T>,
+        name: &str,
+        item: &Item,
+        path: String,
+    ) {
+        match item {
+            Item::ComponentFunc(_) => {
+                let _ = linker.func_new(name, move |_, _, _| {
+                    anyhow::bail!(
+                        "{path} is not implemented by the NEST host: devices can only call the \
+                         interfaces of the nest:plugin package, and imports of other interfaces, \
+                         such as WASI, always trap"
+                    )
+                });
+            }
+            Item::Resource(_) => {
+                // Resources cannot be trapped, they are only ever dropped
+                let _ = linker.resource(name, ResourceType::host::<()>(), |_, _| Ok(()));
+            }
+            Item::ComponentInstance(i) => {
+                let exports: Vec<_> = i.exports(engine).collect();
+                if let Ok(mut instance) = linker.instance(name) {
+                    for (name, item) in exports {
+                        stub(engine, &mut instance, name, &item, format!("{path}#{name}"));
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+
+    for (name, item) in component.component_type().imports(engine) {
+        // Interfaces implemented by the NEST host, and port and environment
+        // imports, which are defined below
+        if name.starts_with("nest:") || ["emit", "get-time", "set-timer"].contains(&name) {
+            continue;
+        }
+        if import_is_stubable(engine, &item) {
+            stub(engine, &mut linker.root(), name, &item, name.to_string());
+        }
     }
 }

@@ -229,7 +229,12 @@ led::export!(Led with_types_in led); // (7)!
 5. The `gpio_in` command was generated for the GPIO port we added. It will be
    called every time the component receives a message via that port.
 6. The `log::info` function enables logging text from the component. NEST
-   supports 3 different logging levels: `info`, `warning`, and `error`.
+   supports 3 different logging levels: `info`, `warning`, and `error`. Note
+   that this is about all a device can ask of its host: it has no clock of its
+   own, no filesystem, and no standard output. Printing with `println!` instead
+   of logging, or waiting with `thread::sleep`, reaches a WASI function which
+   the host does not implement, and traps. See
+   [Host calls](../../reference/components/wasm.md#host-calls).
 7. It is necessary to export the `Led` struct using the auto-generated
    `led::export!` macro.
 
@@ -239,7 +244,7 @@ led::export!(Led with_types_in led); // (7)!
     writes to its GPIO line of course, like the real thing! But then, you may
     wonder why we still had to declare the `gpio-out` import in `wit/led.wit`. And
     the answer is simply that ports are always bi-directional in NEST, by design,
-    even if only one direction ends up being used. This mimicks actual wires, where
+    even if only one direction ends up being used. This mimics actual wires, where
     nothing prevents two devices from driving the same GPIO line. ...But in this
     case, prepare for unexpected behavior, both in NEST and actual hardware. :wink:
 

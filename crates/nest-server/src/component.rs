@@ -320,7 +320,9 @@ impl ComponentHandle {
         let status_clone = status.clone();
         let handle = thread::spawn(move || {
             if let Err(e) = f(command_rx, event_tx.clone(), Logger::new(log_tx), status_clone) {
-                event_tx.send(ComponentEvent::error(e.to_string()))?;
+                // Include the error chain, since the cause of a Wasm trap is
+                // otherwise lost in the backtrace of the error it surfaces as
+                event_tx.send(ComponentEvent::error(format!("{e:#}")))?;
             }
             Ok(())
         });

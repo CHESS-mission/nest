@@ -1,12 +1,9 @@
 <div align="center">
-  <p align="center">
-    <img src="docs/images/NEST-logo-full.png" alt="NEST logo" width="50%" style="margin: 0px;">
-    <!-- <picture> -->
-    <!--   <source media="(prefers-color-scheme: dark)" srcset="docs/images/NEST-logo-full-dark.png"> -->
-    <!--   <source media="(prefers-color-scheme: light)" srcset="docs/images/NEST-logo-full.png"> -->
-    <!--   <img src="docs/images/NEST-logo-full.png" alt="NEST logo" width="50%"> -->
-    <!-- </picture> -->
-  </p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/NEST-logo-full-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/NEST-logo-full.png">
+    <img src="docs/images/NEST-logo-full.png" alt="NEST logo" width="50%">
+  </picture>
 
   [Getting started] | [Learn] | [Guides] | [Reference] | [Python client]
 </div>
@@ -82,6 +79,15 @@ You may also directly pass arguments to NEST by appending them to the command.
 
 ```bash
 docker run --rm -p 3000:3000 --shm-size=2g nest-server:latest --help
+```
+
+## Documentation
+
+You can view the documentation [online](https://CHESS-mission.github.io/nest),
+or build and serve it locally with uv:
+
+```bash
+uv run --project docs-build zensical serve
 ```
 
 ## Citing NEST (BibTeX)

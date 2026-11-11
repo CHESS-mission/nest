@@ -353,7 +353,7 @@ The trapped call logs an error which names the import it reached:
 ```text
 Failed to call export i2c-in: error while executing at wasm backtrace:
     0:     0x2f1 - lm75a!<wasm function 61>: wasi:clocks/monotonic-clock@0.2.12#now
-       is not implemented by the NEST host: devices can only call the interfaces of
+       is not implemented by the NEST host: components can only call the interfaces of
        the nest:plugin package, and imports of other interfaces, such as WASI,
        always trap
 ```

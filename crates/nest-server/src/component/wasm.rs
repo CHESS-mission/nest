@@ -261,7 +261,7 @@ fn define_named_import_traps<T: Send + Sync + 'static>(
             Item::ComponentFunc(_) => {
                 let _ = linker.func_new(name, move |_, _, _| {
                     anyhow::bail!(
-                        "{path} is not implemented by the NEST host: devices can only call the \
+                        "{path} is not implemented by the NEST host: components can only call the \
                          interfaces of the nest:plugin package, and imports of other interfaces, \
                          such as WASI, always trap"
                     )

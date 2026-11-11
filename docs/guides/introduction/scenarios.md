@@ -21,10 +21,14 @@ incurs additional requirements:
    perform simulations and validate their outcomes.
 
 NEST addresses interactivity with **environment variables** and **commands**,
-observability with **events** and automatic validation with **scenarios**. In
-this guide, we will first make our LED and LM75A I2C sensor from the previous
-guide interactive and observable, and then we will create a complete test
-scenario to make sure our system works as expected.
+observability with **events** and automatic validation with
+**[scenarios](../../learn/concepts/scenarios.md)**. All of them cross the
+boundary of the simulation through the [client
+protocol](../../reference/client-protocol.md): *actions* sent by the client
+(`set_env`, `command`) and *updates* sent back to it (`event`). In this guide,
+we will first make our LED and LM75A I2C sensor from the previous guide
+interactive and observable, and then we will create a complete test scenario to
+make sure our system works as expected.
 
 ## Introduction
 
@@ -242,9 +246,10 @@ commands are sent to components while events are emitted by components for
 observability and validation purposes.
 
 Let's add a `changed_state` event to out LED component, with payload "on" or
-"off", using the `emit(name, payload)` function from the `nest-component`
-bindings. That's a single-line change! However, we will also make the LED state
-persistent in order to only fire the event when the state changed:
+"off", using the `emit(name, payload)` function of the [`nest-component`
+world](../../reference/components/wasm.md#the-nestplugin-interface). That's a
+single-line change! However, we will also make the LED state persistent in
+order to only fire the event when the state changed:
 
 ```rust title="led/src/lib.rs"
 #[allow(warnings)]
@@ -395,7 +400,8 @@ the VM and manually start the script!
 ## Writing a test scenario
 
 In NEST, a scenario is a reproducible unit of execution of a simulated system
-in a controlled environment over a time interval. It is specified by the
+in a controlled environment over a time interval (see
+[Scenarios](../../learn/concepts/scenarios.md)). It is specified by the
 combination of a topology and a control sequence: the topology defines the
 system under test, made from a set of components, wires and environment
 variables, while the control sequence consists of a scripted timeline of
@@ -406,7 +412,9 @@ and environment variables by name).
 
 The [NEST Python client](https://github.com/CHESS-mission/nest-python-client)
 is both a Python library and a command line tool to write and execute
-scenarios. Refer to the project's README for installation instructions.
+scenarios. It drives the simulation by using the [client
+protocol](../../reference/client-protocol.md) over a WebSocket connection.
+Refer to the project's README for installation instructions.
 
 Let's start by writing a scenario using the `nest_client` library, which
 exposes a DSL-like syntax on top of Python to write sequences and scenarios:
@@ -482,7 +490,9 @@ def temperature_monitor():
    }`, and it is addressed to the component name passed to the sequence. Notice
    that sequences are still Python functions, so they can take arguments just as
    usual! It is a command of the QEMU component, which forwards the payload to
-   the running QEMU VM via the QEMU Machine Protocol (QMP).
+   the running QEMU VM via the QEMU Machine Protocol (QMP). See the [QEMU
+   component's commands](../../reference/components/qemu.md#commands) for
+   `qmp_command` and the `qmp_response` event it produces.
 4. This an event validation range. Here, we expect to receive a `qmp_response`
    event from the component passed as argument within 500ms from the start of
    the sequence. Events can either be expected (`.expect()`) or forbidden
@@ -498,7 +508,8 @@ def temperature_monitor():
    another temperature over a certain period of time. This is achieved using
    the `lerp_over` parameter, which automatically performs linear interpolation
    between the current value and target value on the server, over the specified
-   period.
+   period (see [`set_env`](../../reference/client-protocol.md#set_env) for which
+   types are interpolated, and how).
 7. Here, we combine several sequences to create a more interesting test sequence
    to verify that the LED turns on when passing the 80 °C threshold (and not
    before).

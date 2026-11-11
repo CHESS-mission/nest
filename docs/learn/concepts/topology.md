@@ -4,8 +4,10 @@ In NEST, a simulated system is specified as a system topology (see [YAML
 topology specification](../../reference/topology.md)). A topology is composed
 of:
 
-- **Components:** emulated devices such as QEMU virtual machines or custom
-  GPIO, I2C or UART devices. They are the basic building blocks of the system.
+- **Components:** emulated devices such as [QEMU virtual
+  machines](../../reference/components/qemu.md) or [custom GPIO, I2C or UART
+  devices](../../reference/components/wasm.md). They are the basic building
+  blocks of the system.
 - **Wires:** virtual hardware connections between components.
 - **Environment variables:** physical properties of the system's environment
   components can measure, such as temperature.
@@ -17,7 +19,11 @@ self-contained units of behavior within the simulated system. In practice, they
 are meant to represent emulated devices, such as a processor or an I2C sensor,
 communicating with each other in real-time via virtual hardware ports. When
 instantiated inside the system, components may receive configuration options
-defined in the topology.
+defined in the topology (see
+[Configuration](../../reference/topology.md#configuration) for how they are
+declared and passed). NEST ships three component types: QEMU virtual machines,
+WebAssembly devices, and the [Multiplexer](../../reference/components/mux.md),
+which switches one port between two channels.
 
 In NEST, each component runs on its own thread. What operations a component
 performs is internal to that component; most of what NEST handles, in addition
@@ -56,16 +62,20 @@ be wired together. Currently, NEST supports the following system port types:
 The **boolean**, **bytes**, and **I2C** types are most useful to represent
 low-level hardware communication such as GPIO lines, UART or I2C buses, while
 **integer**, **float** and **string** can be used to represent higher-level
-interfaces between components in slightly more abstract systems.
+interfaces between components in slightly more abstract systems. Which ports a
+component accepts, and under which names, is specific to it; see [System
+ports](../../reference/topology.md#system-ports) and each component's reference
+page.
 
 ### Environment ports
 
 Environment ports are the mechanism through which components read variables
 from the environment. Inside a system topology, each environment port is bound
 to a variable with matching type from the environment (See [Environment
-variables](#environment-variables) for supported types). Everytime a component
-reads through one of its environment port, it receives the current value of the
-environment variable bound to that port.
+variables](#environment-variables) for supported types, and
+[Environment ports](../../reference/topology.md#environment-ports) for how they
+are declared). Everytime a component reads through one of its environment port,
+it receives the current value of the environment variable bound to that port.
 
 ### Commands & events
 
@@ -78,20 +88,25 @@ they can be used to realize specific test scenarios, such as a sensor
 malfunction. On the other hand, events send machine-parsable information out of
 the system for automatic validation; they provide observability but do not
 interfere with the simulation itself. Commands and events are both
-component-specific and consist of a name and free-form JSON payload.
+component-specific and consist of a name and free-form JSON payload. They are
+exchanged with clients as the [`command`
+action](../../reference/client-protocol.md#command) and the [`event`
+update](../../reference/client-protocol.md#event).
 
 ### Logs
 
 Components can also emit logs. Logs are purely intended for human feedback and
 are not meant to be parsed programmatically for validation. They are useful to
-monitor ongoing simulations and as a debugging tool.
+monitor ongoing simulations and as a debugging tool. They reach clients as
+[`log` updates](../../reference/client-protocol.md#log).
 
 ## Wires
 
 Wires are simple connections between the system ports of components inside a
 topology. A single wire can connect more than two ports with a many-to-many
 relationship[^1], to better represent real hardware connections like GPIO lines
-and I2C buses.
+and I2C buses. Their syntax and the rules checked when a topology is loaded are
+documented in [Wires](../../reference/topology.md#wires).
 
 [^1]: When information is sent by any of the ports on the wire, all other ports
     on the wire receive it.
@@ -114,6 +129,11 @@ scenarios. The supported environment variable types are:
 - **3D vector:** 3-dimensional floating point vector
 - **Quaternion:** floating point quaternion
 - **Tensor:** N-dimensional floating point array
+
+The default value each type starts at, and the exact encoding used when a
+variable is written from outside, are given in [Environment
+variables](../../reference/topology.md#environment-variables) and in
+[`set_env`](../../reference/client-protocol.md#set_env).
 
 [^2]: This only applies inside the simulation; they can obviously be written to
     from outside.

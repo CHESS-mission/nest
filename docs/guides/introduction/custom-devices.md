@@ -5,10 +5,11 @@ icon: lucide/file-box
 # Writing custom devices
 
 NEST only has very few component types out of the box. The previous guide
-covered the *QEMU component*, which enables running QEMU virtual machines
-inside simulations. This guide covers the second most important component: the
-*WebAssembly (Wasm) component*, which enables writing portable custom devices
-and load them in the simulation.
+covered the [QEMU component](../../reference/components/qemu.md), which enables
+running QEMU virtual machines inside simulations. This guide covers the second
+most important component: the [WebAssembly
+(Wasm) component](../../reference/components/wasm.md), which enables writing
+portable custom devices and load them in the simulation.
 
 ## The WebAssembly component
 
@@ -25,7 +26,8 @@ which define a set of imported and exported function signatures.
 
 The `nest-component` WIT world serves as a contract between NEST and the custom
 WebAssembly components, granting them a strict set of capabilities to implement
-the behavior of most physical devices.  
+the behavior of most physical devices. The [WebAssembly component
+reference](../../reference/components/wasm.md) lists the functions it provides.
 
 !!! note
 
@@ -59,6 +61,18 @@ Then, also install
 ```bash
 cargo install --locked wasm-tools wit-bindgen-cli wit-deps-cli
 ```
+
+??? tip "With Nix"
+
+    If you have the NEST repository checked out, its flake pins everything
+    above in the `component-rust` development shell:
+
+    ```bash
+    nix develop .#component-rust
+    ```
+
+    There are `#component-c`, `#component-js` and `#component-python` shells as well, for the
+    other languages.
 
 ### Project setup
 
@@ -149,15 +163,19 @@ world led { // (2)!
 4. Create a port called `gpio`. Each port must correspond to exactly one
    exported / imported function pair named `<port_name>-in` / `<port_name>-out`
    (respectively) and each taking a single argument of the same supported type
-   (`i32`, `f32`, `bool`, `bytes`, `string` and `i2c-transaction`).
+   (`i32`, `f32`, `bool`, `bytes`, `string` and `i2c-transaction`). See [System
+   ports](../../reference/components/wasm.md#system-ports) for the exact
+   mapping between NEST and WIT types.
 
 !!! question "Why `bool`?"
 
     Notice how NEST doesn't have a specialized GPIO port type. In fact, the
     framework itself doesn't have an opinion about how GPIO ports should be
     modeled. However, the QEMU component does; it models GPIO lines as boolean
-    ports. Therefore, any component that requires compatibility with the QEMU
-    component must follow this convention.
+    ports, as listed in its [system
+    ports](../../reference/components/qemu.md#system-ports). Therefore, any
+    component that requires compatibility with the QEMU component must follow
+    this convention.
 
 ### Generating bindings
 
@@ -335,12 +353,14 @@ wires:
 ```
 
 1. To load our LED component, we create instances of the WebAssembly component
-   (type `wasm`).
+   (type `wasm`, see its [reference](../../reference/components/wasm.md)).
 2. This is the path to the `led.wasm` binary. Make sure to move it to your
    local directory or change the path!
 3. As for the QEMU component, we must explicitly declare all system ports. The
    name must match the port name of the component, otherwise NEST will fail to
-   find the matching imports and exports!
+   find the matching imports and exports! See [System
+   ports](../../reference/components/wasm.md#system-ports) for what NEST looks
+   up at start-up.
 
 Then, start the NEST server with the topology loaded and start the simulation
 from the web app.
@@ -1006,10 +1026,12 @@ mechanism for this is called *environment variables* (not to be confused with
 Unix-style environment variables). A topology can declare any number of
 environment variables of a variety of supported types, managed by NEST as part
 of the simulation. They can be accessed read-only by components (via dedicated
-*environment ports*), and driven externally by a client software. We will now
-focus on letting our sensor read from a temperature environment variable, and
-in the next guide, we will see how to use NEST's Python client to drive
-that environment variable's value.
+*[environment ports](../../learn/concepts/topology.md#environment-ports)*), and
+driven externally by a client software (with the [`set_env`
+action](../../reference/client-protocol.md#set_env)). We will now focus on
+letting our sensor read from a temperature environment variable, and in the
+next guide, we will see how to use NEST's Python client to drive that
+environment variable's value.
 
 Start by updating the component's WIT world with an environment port named `temperature`:
 
@@ -1036,7 +1058,9 @@ world lm75a {
     for NEST to properly discover them at runtime. An environment port corresponds
     to exactly one imported function named `read-<port_name>` taking no argument
     and returning a value of any supported type (`i32`, `f32`, `bool`, `vec2`,
-    `vec3`, `quaternion` and `tensor`).
+    `vec3`, `quaternion` and `tensor`). See [Environment
+    ports](../../reference/components/wasm.md#environment-ports) for the
+    signature NEST provides for each type.
 
 Regenerate the bindings, then update the component to read the temperature via
 the newly generated `read_temperature` binding before answering I2C requests:

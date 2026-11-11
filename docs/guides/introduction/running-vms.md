@@ -225,7 +225,10 @@ Login with `root` and your configured password.
 By default, the standard Alpine installation doesn't load kernel modules for
 the VirtIO I2C adapter (required for I2C device interoperability with NEST) and
 the I2C character device interface (required to access I2C devices from
-user-space applications). Load both modules by adding them to a new
+user-space applications). NEST connects those adapters to the rest of the
+simulation through QEMU's vhost-user devices, as described in the [QEMU
+component reference](../../reference/components/qemu.md#overview). Load both
+modules by adding them to a new
 `/etc/modules-load.d/i2c.conf` configuration file:
 
 ```bash
@@ -318,7 +321,8 @@ and transparently routing information between them.
 ### Single VM topology
 
 In NEST, the input of a simulation is called a *topology*—a description of the
-system as a set of interconnected components. Let's write a simple topology in
+system as a set of interconnected components (see the [system
+topology](../../learn/concepts/topology.md)). Let's write a simple topology in
 which we will define a single instance of our Alpine VM.
 
 ```yaml title="topology.yaml"
@@ -344,14 +348,16 @@ components:
 ```
 
 1. NEST has several component types. We use `qemu` here to run a QEMU virtual
-   machine.
+   machine, whose options are documented in the [QEMU component
+   reference](../../reference/components/qemu.md).
 2. The VM's architecture. It must match the ending of the `qemu-system-<arch>`
    command used to boot the VM earlier.
 3. The amount of RAM of the VM (in MiB), which corresponds to QEMU's `-m`
    option. It has a dedicated configuration parameter here because NEST needs
 to be aware of the value.
 4. All other QEMU options are given below as key-value pairs or key only
-   parameters.
+   parameters. See [Configuration](../../reference/components/qemu.md#configuration)
+   for the complete list of options, including those NEST adds automatically.
 5. The following options create a VirtIO serial console at `/dev/hvc0` inside
    the VM, and connect it to a virtual PTY at `/tmp/qemu-serial-pty` on the
    host machine. This is useful for debugging the VM, or just playing around!
@@ -385,7 +391,9 @@ picocom -b 115200 /tmp/qemu-serial-pty
 You should be greeted with a login prompt, as configured in [Setting up getty
 on hvc0](#setting-up-getty-on-hvc0), and the VM should look very similar to
 before. However, you may notice that a VirtIO I2C bus and a VirtIO GPIO chip
-have automatically been added by NEST (`i2c-1` and `gpiochip0` here).
+have automatically been added by NEST (`i2c-1` and `gpiochip0` here). Which
+guest device corresponds to which emulated interface is described in [Accessing
+the guest](../../reference/components/qemu.md#accessing-the-guest).
 
 ```bash
 $ i2cdetect -l
@@ -525,16 +533,20 @@ wires: # (8)!
    the chip and appear in the VM.
 4. The number of UART ports to attach to the VM.
 5. All ports used by the component must be explicitly declared here, otherwise
-   they cannot be wired. Ports come in two flavors: *system* ports and
-   *environment* ports. Environment ports are not relevant for the QEMU component;
-   you will learn about them in later guides.
+   they cannot be wired. Ports come in two flavors: [system
+   ports](../../learn/concepts/topology.md#system-ports) and [environment
+   ports](../../learn/concepts/topology.md#environment-ports). Environment ports
+   are not relevant for the QEMU component; you will learn about them in later
+   guides.
 6. For the QEMU component, GPIO ports **must** be declared with the name
-   `gpio<num>`, with `<num>` the line number, and type `bool`.
+   `gpio<num>`, with `<num>` the line number, and type `bool`. See [System
+   ports](../../reference/components/qemu.md#system-ports) for the port names
+   the component accepts.
 7. Similarly, UART ports **must** be declared with the name `uart<num>`, with
    `<num>` the port number, and type `bytes`.
 8. Wires represent physical connections between ports. A single wire can
    connect more than two ports, with a many-to-many relationship (useful for
-   protocols like I2C).
+   protocols like I2C). See [Wires](../../learn/concepts/topology.md#wires).
 
 This topology defines two virtual machines, *AlpineVM1* and *AlpineVM2*,
 connected via two GPIO and one UART ports. We do not demonstrate I2C ports in

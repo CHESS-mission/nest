@@ -33,12 +33,12 @@ ports**, **environment ports**, **commands**, **events**, and **logs**.
 
 ### System ports
 
-System ports are the through which components communicate with each other
-within the simulated system. They are meant to model actual hardware ports at
-the semantical level (i.e. they do not model electrical behavior or physical
-wire properties). Like real hardware ports, system ports are bi-directional,
-which means that a component can always both send and receive data through a
-system port.
+System ports are the mechanism through which components communicate with each
+other within the simulated system. They are meant to model actual hardware
+ports at the semantical level (i.e. they do not model electrical behavior or
+physical wire properties). Like real hardware ports, system ports are
+bi-directional, which means that a component can always both send and receive
+data through a system port.
 
 !!! note
 

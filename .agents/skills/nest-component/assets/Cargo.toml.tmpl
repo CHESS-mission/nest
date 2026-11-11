@@ -1,0 +1,21 @@
+[package]
+name = "@NAME@"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Keep in sync with the version NEST itself was built against; the generated glue
+# is compile-time, so nothing else needs to agree
+wit-bindgen = "0.63"
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"
+
+# Standalone: a component project is its own workspace root, wherever it is created
+[workspace]

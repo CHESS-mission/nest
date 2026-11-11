@@ -72,7 +72,9 @@ cargo install --locked wasm-tools wit-bindgen-cli wit-deps-cli
     ```
 
     There are `#component-c`, `#component-js` and `#component-python` shells as well, for the
-    other languages.
+    other languages. The repository also ships an agent skill for authoring components,
+    under `.agents/skills/nest-component/`, which scaffolds, builds and verifies them
+    against a checkout.
 
 ### Project setup
 

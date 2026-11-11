@@ -1,3 +1,5 @@
 [toolchain]
 channel = "stable"
-targets = [ "wasm32-unknown-unknown" ]
+
+# wasm32-wasip2 is included for building devices
+targets = [ "wasm32-unknown-unknown", "wasm32-wasip2" ]

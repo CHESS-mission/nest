@@ -18,6 +18,7 @@
       systems = import inputs.systems;
 
       imports = [
+        ./nix/modules/component-shells.nix
         ./nix/modules/devshell.nix
         ./nix/modules/rust.nix
       ];

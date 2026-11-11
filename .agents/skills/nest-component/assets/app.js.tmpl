@@ -1,0 +1,143 @@
+/**
+ * @NAME@: @ONE_LINE_DESCRIPTION@
+ *
+ * Datasheet: @DATASHEET@
+ *
+ * A JavaScript component works because of the `-d all` flag of the build, which strips
+ * the WASI features out of the StarlingMonkey engine and leaves a component which
+ * imports nothing but `nest:plugin` and its own ports. Two conventions follow from
+ * how componentize-js generates bindings, and neither is a guess:
+ *
+ *   - an import of an *interface* is a named import of that interface's WIT path, so
+ *     the log functions come from `nest:plugin/log`
+ *   - an import declared at the *root of the world*, which is what a port, `emit`,
+ *     `get-time` and `set-timer` all are, is the default export of a module named
+ *     after the WIT function: `import i2cOut from 'i2c-out'`
+ *
+ * A variant is an object with a `tag` and a `val`, so a transaction arrives as
+ * `{ tag: 'request', val: { addr: 72, op: { tag: 'read', val: 2 } } }`. A `list<u8>`
+ * is a byte array on the way out, and an array-like object on the way in.
+ *
+ * Arguments arrive as the string rendering of the JSON value a client sent.
+ */
+
+import { info, warning, error } from 'nest:plugin/log';
+import i2cOut from 'i2c-out';
+import emit from 'emit';
+
+// Uncomment these two together with `include nest:plugin/timeout-ext;` in the world.
+// An import of a function the world does not declare fails the build, which is loud,
+// and that is the friendliest failure in this language.
+// import getTime from 'get-time';
+// import setTimer from 'set-timer';
+
+// The state of the component. Module level, because that is the one instance there is
+const state = {
+  address: null,      // from the `i2c_address` option
+  pointer: 0,         // the register last written, which a read then returns
+  registers: new Array(8).fill(0),
+};
+
+function parseAddress(value) {
+  const text = String(value).trim();
+  return text.toLowerCase().startsWith('0x') ? parseInt(text, 16) : parseInt(text, 10);
+}
+
+function parseArguments(args) {
+  // Called with the string rendering of whatever the client sent, which for an
+  // object is JSON and for a bare value is that value
+  if (!args) return {};
+  try {
+    const value = JSON.parse(args);
+    return typeof value === 'object' && value !== null ? value : { value };
+  } catch {
+    return { raw: args };
+  }
+}
+
+export function init(options) {
+  for (const [name, value] of options) {
+    if (name === 'i2c_address') {
+      state.address = parseAddress(value);
+    } else {
+      warning(`unknown option ${name}, ignoring`);
+    }
+  }
+
+  if (state.address === null) {
+    // A `result<_, E>` export fails by throwing the *variant*, not an Error. An
+    // ordinary exception escapes into the engine's printing path, which reaches for
+    // the filesystem, and traps instead: the difference between these two lines is
+    // whether anyone learns what went wrong.
+    throw { tag: 'unknown-option', val: 'i2c_address' };
+  }
+
+  info(`@NAME@ ready at address 0x${state.address.toString(16).padStart(2, '0')}`);
+  // TODO: schedule the first conversion, if the part has a periodic one
+  // setTimer(100);
+}
+
+export function onCommand(command, args) {
+  const arg = parseArguments(args);
+
+  // Two starters, so that a scenario has something to call and verify.sh has
+  // something to check. Replace them with what the part defines.
+  if (command === 'reset') {
+    state.pointer = 0;
+    state.registers.fill(0);
+    info('registers reset');
+    return;
+  }
+
+  if (command === 'simulate-failure') {
+    warning(`fault injected with ${JSON.stringify(arg)}`);
+    return;
+  }
+
+  throw { tag: 'unknown-command' };
+}
+
+export function onTimeout(timerId) {
+  try {
+    // TODO: the periodic part of the model, then setTimer again to repeat
+    info(`timer ${timerId} expired`);
+  } catch (cause) {
+    error(`on_timeout failed: ${cause}`);
+  }
+}
+
+export function i2cIn(transaction) {
+  try {
+    if (transaction.tag !== 'request') {
+      return;               // not something this component asked for
+    }
+
+    const request = transaction.val;
+    if (request.addr !== state.address) {
+      return;               // another component's business
+    }
+
+    const op = request.op;
+    if (op.tag === 'write') {
+      const bytes = Array.from(op.val);
+      if (bytes.length > 0) {
+        state.pointer = bytes[0];
+        for (let index = 1; index < bytes.length; index += 1) {
+          state.registers[state.pointer + index - 1] = bytes[index];
+        }
+      }
+      i2cOut({ tag: 'response', val: { op: { tag: 'write' } } });
+      return;
+    }
+
+    // A read: the part answers from the register it points at, and the request
+    // says how many bytes the master wants
+    const count = op.val;
+    const data = new Uint8Array(
+      state.registers.slice(state.pointer, state.pointer + count));
+    i2cOut({ tag: 'response', val: { op: { tag: 'read', val: data } } });
+    emit('i2c-read', JSON.stringify({ register: state.pointer, count }));
+  } catch (cause) {
+    error(`i2c_in failed: ${cause}`);
+  }
+}

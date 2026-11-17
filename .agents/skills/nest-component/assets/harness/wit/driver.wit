@@ -1,0 +1,21 @@
+package nest:harness;
+
+world driver {
+  include nest:plugin/nest-component;
+  include nest:plugin/timeout-ext;
+
+  use nest:plugin/types.{bytes, i2c-transaction, i2c-request, i2c-request-op, i2c-response,
+    i2c-response-op};
+
+  // I2C port, to drive components which answer transactions
+  export i2c-in: func(msg: i2c-transaction);
+  import i2c-out: func(msg: i2c-transaction);
+
+  // Binary port, to drive components behind a GPIO line
+  export lines-in: func(msg: bool);
+  import lines-out: func(msg: bool);
+
+  // Byte stream port, to drive components behind a serial link
+  export serial-in: func(msg: bytes);
+  import serial-out: func(msg: bytes);
+}

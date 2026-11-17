@@ -1,0 +1,4 @@
+# The WIT of nest:plugin is copied in by build.sh, from the checkout, so it
+# is never committed twice
+wit/deps/
+target/

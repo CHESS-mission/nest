@@ -1,39 +1,36 @@
 {
-  description = "NEST flake";
+  description = "NEST workspace flake";
 
   inputs = {
-    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
-    rust-overlay.url = "github:oxalica/rust-overlay";
-    flake-utils.url  = "github:numtide/flake-utils";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
+
+    # Only Linux is supported
+    systems.url = "github:nix-systems/default-linux";
+
+    rust-flake.url = "github:juspay/rust-flake";
+    rust-flake.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs {
-          inherit system overlays;
+  outputs = inputs@{ flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = import inputs.systems;
+
+      imports = [
+        ./nix/modules/component-shells.nix
+        ./nix/modules/devshell.nix
+        ./nix/modules/rust.nix
+      ];
+
+      perSystem =
+        { pkgs
+        , self'
+        , ...
+        }:
+        {
+          formatter = pkgs.nixpkgs-fmt;
+          packages.default = self'.packages.nest-server;
         };
-      in
-      {
-        devShells.default = with pkgs; mkShell {
-          name = "NEST devShell";
-          buildInputs = [
-            picocom
-            socat
-            extism-cli
-            qemu
-            cargo-leptos
-            binaryen
-            dart-sass
-            tailwindcss_4
-            nodePackages.nodejs
-            llvmPackages.clang
-            libguestfs-with-appliance
-            (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-          ];
-          LIBCLANG_PATH = lib.makeLibraryPath [ pkgs.llvmPackages_16.libclang ];
-        };
-      }
-    );
+    };
 }

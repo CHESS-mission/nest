@@ -1,0 +1,113 @@
+---
+# Machine readable description of the component. verify.sh compares it against the
+# built component, so that the documentation cannot drift from the binary. Keep
+# every field here, even when empty.
+name: @NAME@
+world: example:components/@NAME_WIT@
+artifact: build/@NAME@.wasm
+language: @LANGUAGE@
+route: @ROUTE@
+datasheet: "@DATASHEET@"
+ports:
+  - name: i2c
+    type: i2c
+    direction: bidirectional
+environment: []
+options:
+  - name: i2c_address
+    required: true
+    format: "integer, either 0x48 or 72"
+    meaning: "the address the component answers to on the bus"
+    sample: "0x48"
+commands:
+  - name: reset
+    arguments: "none"
+    meaning: "return the register file to its reset values"
+    sample: {}
+  - name: simulate-failure
+    arguments: "an object describing the fault to inject"
+    meaning: "a hook for scenarios, to be replaced by what the part can break"
+    sample: {}
+events: []
+tested:
+  nest: "@NEST_REV@"
+  toolchain: "@TOOLCHAIN@"
+---
+
+# @NAME@
+
+@ONE_LINE_DESCRIPTION@
+
+## Datasheet
+
+Fill this before writing any handler, and cite the page each value comes from.
+An address which looks right is the failure this table exists to prevent.
+
+| Register      | Address | Access | Reset | Meaning | Source |
+|---------------|---------|--------|-------|---------|--------|
+| @NAME@_ID     | 0x00    | R      | ?     |         |        |
+|               |         |        |       |         |        |
+
+Unimplemented registers: say which ones, and what the component does when addressed
+(e.g. reads return 0, writes are ignored).
+
+## Ports
+
+| Port | Type | Direction | Notes |
+|------|------|-----------|-------|
+
+## Configuration
+
+| Option | Required | Format | Meaning |
+|--------|----------|--------|---------|
+
+## Commands
+
+| Command | Arguments | Effect |
+|---------|-----------|--------|
+
+Arguments are what the component sees, i.e. the string rendering of the JSON value
+sent by the client. Write them exactly as a scenario must send them.
+
+## Events
+
+| Event | Payload | When |
+|-------|---------|------|
+
+Payloads need a shape, not a description, since scenarios assert on them.
+
+## Environment variables
+
+| Port | Variable | Type | Read as |
+|------|----------|------|---------|
+
+## Using it in a topology
+
+```yaml
+components:
+  - name: @NAME@
+    type: wasm
+    config:
+      module: path/to/@NAME@.wasm
+      options:
+        - ["i2c_address", "0x48"]
+    ports:
+      system:
+        - name: i2c
+          type: i2c
+```
+
+## Using it in a scenario
+
+What to assert on to detect the behavior this component models: which events, with
+which payloads, and which environment variables change.
+
+## Limitations
+
+What is not modeled, and what a user should not expect (timing, bus arbitration,
+error paths, power).
+
+## Verification
+
+Ran `scripts/verify.sh` on @DATE@; result: not yet. Toolchain and NEST revision
+in the front matter above.

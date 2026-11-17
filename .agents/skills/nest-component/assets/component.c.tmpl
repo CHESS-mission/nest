@@ -1,0 +1,140 @@
+/* @NAME@: @ONE_LINE_DESCRIPTION@
+ *
+ * Datasheet: @DATASHEET@
+ *
+ * Fill the register table of README.md, citing the page each address and bit
+ * field comes from, before writing handler code. A plausible-looking register
+ * address is the easiest mistake to make here, and nothing but the datasheet
+ * catches it.
+ */
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "bindings/@NAME_C@.h"
+
+/* The bindings call the exports as free functions, so a component keeps its state
+ * in file scope. A component instance is never entered concurrently. */
+static uint16_t g_address = 0;      /* the address set by i2c_address */
+static bool g_has_address = false;
+static uint8_t g_pointer = 0;       /* the register last pointed to */
+
+/* The generated string type carries a uint8_t *, which C++ will not hand to a
+ * function expecting char *, hence the casts below. */
+
+/* Log a message through the host, which is the only output a component has: a
+ * printf goes to wasi:cli/stdout, which traps. */
+static void note(const char *text) {
+  @NAME_C@_string_t message;
+  @NAME_C@_string_dup(&message, text);
+  nest_plugin_log_info(&message);
+}
+
+/* Copy a WIT string into a NUL terminated buffer of its own */
+static void copy(const @NAME_C@_string_t *text, char *out, size_t capacity) {
+  size_t len = text->len < capacity - 1 ? text->len : capacity - 1;
+  memcpy(out, text->ptr, len);
+  out[len] = '\0';
+}
+
+static void fail_init(@NAME_C@_init_error_t *err, uint8_t tag, const char *reason) {
+  @NAME_C@_string_dup(&err->val.unknown_option, reason);
+  err->tag = tag;
+}
+
+bool exports_@NAME_C@_init(@NAME_C@_list_tuple2_string_string_t *options,
+                             @NAME_C@_init_error_t *err) {
+  for (size_t i = 0; i < options->len; ++i) {
+    char key[32];
+    char value[32];
+    copy(&options->ptr[i].f0, key, sizeof(key));
+    copy(&options->ptr[i].f1, value, sizeof(value));
+
+    if (strcmp(key, "i2c_address") == 0) {
+      g_address = (uint16_t) strtoul(value, NULL, 0);   /* accepts 0x48 and 72 */
+      g_has_address = true;
+    } else {
+      char message[80];
+      snprintf(message, sizeof(message), "unknown option %s, ignoring", key);
+      note(message);
+    }
+  }
+
+  if (!g_has_address) {
+    fail_init(err, NEST_PLUGIN_ERRORS_INIT_ERROR_UNKNOWN_OPTION, "missing option i2c_address");
+    return false;
+  }
+
+  char message[80];
+  snprintf(message, sizeof(message), "@NAME@ ready at address 0x%x", g_address);
+  note(message);
+  return true;
+}
+
+bool exports_@NAME_C@_on_command(@NAME_C@_string_t *command,
+                                   @NAME_C@_string_t *args,
+                                   @NAME_C@_command_error_t *err) {
+  /* Commands are what scenarios call to inject faults. Arguments arrive as the
+   * string rendering of the JSON value sent by the client, so a boolean arrives
+   * as "true" while a JSON string arrives as "\"true\"". */
+  /* The two strings are not NUL terminated, so compare against the length too */
+  if (command->len == 5 && strncmp((const char *) command->ptr, "reset", 5) == 0) {
+    g_pointer = 0;
+    note("register pointer reset to 0");
+    return true;
+  }
+  if (command->len == 16 && strncmp((const char *) command->ptr, "simulate-failure", 16) == 0) {
+    char message[120];
+    snprintf(message, sizeof(message), "fault injected with %.*s",
+             (int) args->len, args->ptr);
+    note(message);
+    return true;
+  }
+
+  err->tag = NEST_PLUGIN_ERRORS_COMMAND_ERROR_UNKNOWN_COMMAND;
+  return false;
+}
+
+void exports_@NAME_C@_i2c_in(@NAME_C@_i2c_transaction_t *transaction) {
+  if (transaction->tag != NEST_PLUGIN_TYPES_I2C_TRANSACTION_REQUEST) {
+    note("received a response, ignoring");
+    return;
+  }
+
+  /* Ignoring a transaction addressed elsewhere is what a component on a shared bus
+   * does, but state the rule in the README */
+  if (!g_has_address || transaction->val.request.addr != g_address) {
+    return;
+  }
+
+  @NAME_C@_i2c_transaction_t reply;
+
+  if (transaction->val.request.op.tag == NEST_PLUGIN_TYPES_I2C_REQUEST_OP_WRITE) {
+    /* TODO: decode val.request.op.val.write.ptr[0] as the register, apply the
+     * rest of it, and preserve the read-only bits of the register */
+    if (transaction->val.request.op.val.write.len > 0) {
+      g_pointer = transaction->val.request.op.val.write.ptr[0];
+    }
+    reply.tag = NEST_PLUGIN_TYPES_I2C_TRANSACTION_RESPONSE;
+    reply.val.response.op.tag = NEST_PLUGIN_TYPES_I2C_RESPONSE_OP_WRITE;
+    @NAME_C@_i2c_out(&reply);
+    return;
+  }
+
+  /* TODO: return the bytes of the pointed register, most significant byte first
+   * unless the datasheet says otherwise. The buffer outlives the call, which is
+   * where a component which mallocs per reply leaks. */
+  static uint8_t bytes[8];
+  uint32_t len = transaction->val.request.op.val.read;
+  if (len > sizeof(bytes)) {
+    len = sizeof(bytes);
+  }
+  reply.tag = NEST_PLUGIN_TYPES_I2C_TRANSACTION_RESPONSE;
+  reply.val.response.op.tag = NEST_PLUGIN_TYPES_I2C_RESPONSE_OP_READ;
+  reply.val.response.op.val.read.ptr = bytes;
+  reply.val.response.op.val.read.len = len;
+  @NAME_C@_i2c_out(&reply);
+}

@@ -1,0 +1,4 @@
+/* Prevents wrapping inline code inside tables */
+.md-typeset td code {
+    white-space: nowrap;
+}

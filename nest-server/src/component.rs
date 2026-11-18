@@ -1,3 +1,4 @@
+pub mod hil;
 pub mod mux;
 pub mod qemu;
 pub mod test;

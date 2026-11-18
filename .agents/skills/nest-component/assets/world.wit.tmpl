@@ -1,0 +1,24 @@
+package example:components;
+
+// The world of the @NAME@ component. NEST binds ports by name: a system port needs the
+// pair `<port>-in` and `<port>-out`, an environment port needs `read-<port>`. See
+// references/contract.md for the types and what happens when a name is missing.
+world @NAME_WIT@ {
+  include nest:plugin/nest-component;   // init, on-command, emit, get-time, log, types, errors
+
+  // Uncomment to schedule behavior with timers: also export on-timeout
+  // include nest:plugin/timeout-ext;
+
+  use nest:plugin/types.{bytes, i2c-transaction};
+
+  // A system port carries one of six types, and the function signature must match it:
+  //   bool -> bool      int -> i32       float -> f32
+  //   text -> string    bytes -> bytes   i2c -> i2c-transaction
+  export i2c-in: func(msg: i2c-transaction);
+  import i2c-out: func(msg: i2c-transaction);
+
+  // An environment port reads a variable of the same type, and declares no export:
+  //   bool -> bool      int -> i32      float -> f32
+  //   vec2, vec3, quaternion, tensor -> records of the same name
+  // import read-temperature: func() -> f32;
+}

@@ -1,29 +1,63 @@
-# NEST
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/NEST-logo-full-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/NEST-logo-full.png">
+    <img src="docs/images/NEST-logo-full.png" alt="NEST logo" width="50%">
+  </picture>
 
-NEST (Numerical Environment for Software Testing) is a modular integration
-testing framework intended for flight software verification written in Rust
-using [Extism](https://extism.org/).
+  [Getting started] | [Learn] | [Guides] | [Reference] | [Python client]
+</div>
 
-## Build
+NEST (*Numerical Environment for Software Testing*) is modular framework for
+reproducible software-in-the-loop testing of embedded systems.
 
-Install the following dependencies:
+[Getting Started]: https://CHESS-mission.github.io/nest
+[Learn]: https://CHESS-mission.github.io/nest/learn
+[Guides]: https://CHESS-mission.github.io/nest/guides
+[Reference]: https://CHESS-mission.github.io/nest/reference
+[Python client]: https://github.com/CHESS-mission/nest-python-client
 
-- `cargo-leptos`: `cargo install --locked cargo-leptos`.
-- `saas`: <https://sass-lang.com/install/>.
-- `tailwindcss`: <https://tailwindcss.com/docs/installation>.
-- `binaryen`: <https://github.com/WebAssembly/binaryen>.
+## Building from source
 
-Then the `server` release binary can be built using Cargo Leptos:
+Building NEST from source requires the following dependencies:
+
+- [SAAS](https://sass-lang.com/install/)
+- [Tailwind](https://tailwindcss.com/docs/installation)
+- [Binaryen](https://github.com/WebAssembly/binaryen)
+
+
+Then the `server` release binary can be built using [Cargo
+Leptos](https://github.com/leptos-rs/cargo-leptos):
 
 ```bash
+cargo install --locked cargo-leptos
 cargo leptos build --release
+```
+
+## Building with Nix
+
+NEST provides both a fully-featured development shell and the `nest-server`
+package as outputs of its [Nix](https://nixos.org/) flake. You can manually
+build NEST by entering the development shell, which provides all the project's
+build dependencies and some useful runtime tools (e.g. QEMU, picocom):
+
+```bash
+nix develop
+cargo leptos build --release
+```
+
+Alternatively, you can directly build NEST with Nix:
+
+```bash
+nix build                            # local build
+nix build github:CHESS-mission/nest  # or build source from github
 ```
 
 ## Docker image
 
 Building and running NEST inside a Docker container is a convenient option both
-for development and deployment. Start by building the Debian-based image
-provided in `Dockerfile`, which builds NEST as part of the process.
+for development and deployment. Start by building our Debian-based image, which
+builds NEST as part of the process.
 
 ```bash
 docker build -t nest-server:latest .
@@ -45,4 +79,29 @@ You may also directly pass arguments to NEST by appending them to the command.
 
 ```bash
 docker run --rm -p 3000:3000 --shm-size=2g nest-server:latest --help
+```
+
+## Documentation
+
+You can view the documentation [online](https://CHESS-mission.github.io/nest),
+or build and serve it locally with uv:
+
+```bash
+uv run --project docs-build zensical serve
+```
+
+## Citing NEST (BibTeX)
+
+```bibtex
+@inproceedings{NEST,
+    editor       = {Detrell, Gisela;Messina, Vincenzo;García Alarcia, Ramón María;Kinnaird, Alexander},
+    author       = {Felber, Nathan and Fiszbin, Vincent and Noublanche, Hugo and De Zen, Alessandro and Sandoz, Quentin and Anastassova, Emma},
+    title        = {NEST: A Modular Framework for Reproducible Software-in-the-Loop Testing of Spacecraft Systems},
+    booktitle    = {Proceedings of the 5th Symposium on Space Educational Activities (SSEA)},
+    year         = {2026},
+    publisher    = {Technical University of Munich (TUM)},
+    organization = {Technical University of Munich (TUM) and European Space Agency (ESA)},
+    doi          = {10.14459/2026md1857626},
+    language     = {en},
+}
 ```

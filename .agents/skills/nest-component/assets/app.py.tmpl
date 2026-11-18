@@ -1,0 +1,136 @@
+"""@NAME@: @ONE_LINE_DESCRIPTION@
+
+Datasheet: @DATASHEET@
+
+A Python component works because of the `--stub-wasi` flag of the build, which answers the
+WASI imports of the runtime at build time instead of at run time. Three consequences
+shape this file, and none of them is visible in the tool's documentation:
+
+  - state lives at module level. A fresh `WitWorld` instance is made for each call, so
+    `self.x = 1` in one handler is gone in the next
+  - nothing may raise out of a handler. Printing an exception imports `os` and stats
+    the filesystem, which reaches a stub and traps, so the useful message is replaced
+    by an `unreachable`. Every body is wrapped, and reports with `log.error`
+  - the random seed and the clock the interpreter saw are frozen at build time, so
+    `random` repeats the same sequence in every run and is useless for a model
+
+Arguments arrive as the string rendering of the JSON value a client sent, which is what
+`_arguments` is for.
+"""
+
+import json
+
+from componentize_py_types import Err
+
+from wit_world import emit, get_time, i2c_out
+from wit_world.imports import errors, log
+from wit_world.imports.types import (I2cRequest, I2cRequestOp_Read, I2cRequestOp_Write,
+                                     I2cResponse, I2cResponseOp_Read, I2cResponseOp_Write,
+                                     I2cTransaction_Request, I2cTransaction_Response)
+
+# Add `set_timer` to the line above, and `include nest:plugin/timeout-ext;` to the
+# world, once the model needs to schedule anything. An import of a function the world
+# does not declare fails the build, which is the one check in this language which is
+# not silent.
+
+# An import inside a handler would run at call time, and that is a WASI call: keep them
+# all at the top of the file, where the build resolves them.
+
+# The state of the component, as a real one has exactly one of these
+state = {
+    "address": None,     # from the `i2c_address` option
+    "pointer": 0,        # the register last written, which a read then returns
+    "registers": [0] * 8,
+}
+
+
+def _address(value):
+    """Accepts both `0x48` and `72`, since topologies are written by people."""
+    text = value.strip()
+    return int(text, 16) if text.lower().startswith("0x") else int(text)
+
+
+def _arguments(args):
+    """Arguments arrive as the string rendering of the JSON value sent by the client."""
+    if not args:
+        return {}
+    try:
+        value = json.loads(args)
+    except ValueError:
+        return {"raw": args}
+    return value if isinstance(value, dict) else {"value": value}
+
+
+class WitWorld:
+    """The exports of the world. The name is the convention, not a choice."""
+
+    def init(self, options):
+        try:
+            for name, value in options:
+                if name == "i2c_address":
+                    state["address"] = _address(value)
+                else:
+                    log.warning(f"unknown option {name}, ignoring")
+
+            if state["address"] is None:
+                raise Err(errors.InitError_UnknownOption(value="i2c_address"))
+
+            log.info(f"@NAME@ ready at address {state['address']:#04x}")
+        except Err:
+            raise                              # an error meant to reach the host
+        except BaseException as error:
+            log.error(f"init failed: {error!r}")
+            raise Err(errors.InitError_InvalidValue(value=str(error)))
+
+    def on_command(self, command, args):
+        try:
+            arguments = _arguments(args)
+            if command == "reset":
+                state["pointer"] = 0
+                state["registers"] = [0] * len(state["registers"])
+                log.info("registers reset")
+            elif command == "simulate-failure":
+                log.warning(f"fault injected with {arguments}")
+            else:
+                raise Err(errors.CommandError_UnknownCommand())
+        except Err:
+            raise
+        except BaseException as error:
+            log.error(f"command {command} failed: {error!r}")
+            raise Err(errors.CommandError_InvalidValue(value=str(error)))
+
+    def on_timeout(self, timer_id):
+        # Called only if the world includes nest:plugin/timeout-ext and set_timer is
+        # imported above; harmless otherwise, since nothing arms a timer
+        try:
+            # TODO: the periodic part of the model, then set_timer(200) to repeat
+            log.info(f"timer {timer_id} expired at {get_time():.3f} s")
+        except BaseException as error:
+            log.error(f"on_timeout failed: {error!r}")
+
+    def i2c_in(self, msg):
+        """A transaction aimed at this component. TODO: model the register table."""
+        try:
+            if isinstance(msg, I2cTransaction_Response):
+                return                          # not something this component asked for
+
+            request = msg.value
+            if request.addr != state["address"]:
+                return                          # another component's business
+
+            if isinstance(request.op, I2cRequestOp_Write):
+                state["pointer"] = request.op.value[0] if request.op.value else 0
+                payload = request.op.value[1:] if request.op.value else b""
+                for index, byte in enumerate(payload):
+                    if state["pointer"] + index < len(state["registers"]):
+                        state["registers"][state["pointer"] + index] = byte
+            elif isinstance(request.op, I2cRequestOp_Read):
+                # The register the component points at, as a component with a pointer does
+                start = request.op.value if request.op.value else state["pointer"]
+                state["pointer"] = start
+                data = bytes(state["registers"][start:start + 1])
+                i2c_out(I2cTransaction_Response(value=I2cResponse(
+                    op=I2cResponseOp_Read(value=data))))
+                emit("i2c-read", f"{{\"register\": {start}}}")
+        except BaseException as error:
+            log.error(f"i2c_in failed: {error!r}")

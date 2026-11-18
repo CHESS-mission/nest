@@ -1,0 +1,122 @@
+//! @NAME@: @ONE_LINE_DESCRIPTION@
+//!
+//! Datasheet: @DATASHEET@
+//!
+//! Before writing handler code, fill the register table of README.md, citing the
+//! page each address and bit field comes from. A plausible-looking register
+//! address is the easiest mistake to make here, and nothing but the datasheet
+//! catches it.
+
+#[allow(warnings)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "example:components/@NAME_WIT@",
+        path: "wit",
+        generate_all,
+    });
+}
+
+use bindings::nest::plugin::errors::{CommandError, InitError};
+use bindings::nest::plugin::log;
+use bindings::nest::plugin::types::{
+    I2cRequest, I2cRequestOp, I2cResponse, I2cResponseOp, I2cTransaction,
+};
+use bindings::{emit, i2c_out, Guest};
+
+use std::cell::RefCell;
+
+// The bindings call the exports as associated functions, so a component keeps its
+// state here rather than in a struct field
+struct State {
+    /// Address the component answers to, from the `i2c_address` option
+    address: Option<u16>,
+    /// Register last pointed to, which a read then returns, as real components do
+    pointer: u8,
+}
+
+thread_local! {
+    static STATE: RefCell<State> = RefCell::new(State {
+        address: None,
+        pointer: 0,
+    });
+}
+
+struct @NAME_STRUCT@;
+
+impl Guest for @NAME_STRUCT@ {
+    fn init(options: Vec<(String, String)>) -> Result<(), InitError> {
+        let mut address = None;
+
+        for (key, value) in options {
+            match key.as_str() {
+                "i2c_address" => {
+                    let digits = value.trim().trim_start_matches("0x").trim_start_matches("0X");
+                    address = Some(u16::from_str_radix(digits, 16).map_err(|_| {
+                        InitError::InvalidValue(format!("invalid i2c_address: {value}"))
+                    })?);
+                }
+                other => log::warning(&format!("unknown option {other}, ignoring")),
+            }
+        }
+
+        let address = address.ok_or_else(|| {
+            InitError::UnknownOption("missing option i2c_address".to_string())
+        })?;
+
+        STATE.with(|state| state.borrow_mut().address = Some(address));
+        log::info(&format!("@NAME@ ready at address {address:#x}"));
+        Ok(())
+    }
+
+    fn on_command(command: String, args: String) -> Result<(), CommandError> {
+        // Commands are what scenarios call to inject faults. Arguments arrive as
+        // the string rendering of the JSON value sent by the client, so a boolean
+        // arrives as "true" while a JSON string arrives as "\"true\"".
+        match command.as_str() {
+            // Two starters, so that a scenario has something to call and verify.sh
+            // has something to check. Replace them with what the part defines.
+            "reset" => {
+                STATE.with(|state| state.borrow_mut().pointer = 0);
+                log::info("register pointer reset to 0");
+                Ok(())
+            }
+            "simulate-failure" => {
+                log::warning(&format!("fault injected with {args}"));
+                Ok(())
+            }
+            _ => Err(CommandError::UnknownCommand),
+        }
+    }
+
+    fn i2c_in(transaction: I2cTransaction) {
+        let I2cTransaction::Request(I2cRequest { addr, op }) = transaction else {
+            log::warning("received a response, ignoring");
+            return;
+        };
+
+        // Silently ignoring a transaction addressed elsewhere is what a component on
+        // a shared bus does, but say what the rule is
+        if STATE.with(|state| state.borrow().address) != Some(addr) {
+            return;
+        }
+
+        match op {
+            I2cRequestOp::Write(data) => {
+                // TODO: decode data[0] as the register, apply the rest of it, and
+                // preserve the read-only bits of the register
+                i2c_out(&I2cTransaction::Response(I2cResponse {
+                    op: I2cResponseOp::Write,
+                }));
+            }
+            I2cRequestOp::Read(len) => {
+                // TODO: return the bytes of the pointed register, most significant
+                // byte first unless the datasheet says otherwise
+                i2c_out(&I2cTransaction::Response(I2cResponse {
+                    op: I2cResponseOp::Read(vec![0; len as usize]),
+                }));
+            }
+        }
+    }
+}
+
+bindings::export!(@NAME_STRUCT@ with_types_in bindings);

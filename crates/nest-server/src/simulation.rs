@@ -5,11 +5,8 @@ use crossbeam_channel::{Receiver, Select, TryRecvError};
 
 use crate::{
     component::{
-        Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, mux::MuxComponent, qemu::QemuComponent, wasm::WasmComponent
-    },
-    environment::{AnySharedEnvironmentVar, SharedEnvironmentVar},
-    parser::specs::{ComponentTypeSpec, EnvPortTypeSpec, PortTypeSpec, TopologySpec},
-    ports::{AnyEnvironmentPort, AnySystemPortBuilder, SystemPortBuilder},
+        Component, ComponentEvent, ComponentHandle, ComponentParams, LogEntry, hil::HilComponent, mux::MuxComponent, qemu::QemuComponent, wasm::WasmComponent
+    }, environment::{AnySharedEnvironmentVar, SharedEnvironmentVar}, parser::specs::{ComponentTypeSpec, EnvPortTypeSpec, PortTypeSpec, TopologySpec}, ports::{AnyEnvironmentPort, AnySystemPortBuilder, SystemPortBuilder},
 };
 
 pub struct SimulationBuilder {
@@ -169,6 +166,7 @@ impl SimulationBuilder {
                 ComponentTypeSpec::Qemu => { components.insert(comp.name.clone(), Box::new(QemuComponent::from_params(params)?)); },
                 ComponentTypeSpec::Wasm => { components.insert(comp.name.clone(), Box::new(WasmComponent::from_params(params)?)); },
                 ComponentTypeSpec::Mux  => { components.insert(comp.name.clone(), Box::new(MuxComponent::from_params(params)?)); },
+                ComponentTypeSpec::Hil  => { components.insert(comp.name.clone(), Box::new(HilComponent::from_params(params)?)); },
             }
         }
 

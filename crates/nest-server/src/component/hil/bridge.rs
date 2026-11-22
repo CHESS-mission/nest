@@ -8,9 +8,9 @@ use std::{
 use tokio::sync::oneshot;
 
 use crate::{
-    error::FirmwareError,
-    header::*,
-    status::{Status, StatusError},
+    component::hil::error::FirmwareError,
+    component::hil::header::*,
+    component::hil::status::{Status, StatusError},
 };
 
 #[derive(Debug, Clone, Copy)] #[repr(u8)] pub enum I2cSpeed { Slow = 0, Fast = 1 }

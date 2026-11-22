@@ -30,6 +30,7 @@ Then the `server` release binary can be built using [Cargo
 Leptos](https://github.com/leptos-rs/cargo-leptos):
 
 ```bash
+sudo apt install libudev-dev pkg-config
 cargo install --locked cargo-leptos
 cargo leptos build --release
 ```

@@ -1,4 +1,4 @@
-use crate::status::STATUS_SIZE;
+use crate::component::hil::status::STATUS_SIZE;
 
 // Sizes
 pub const HEADER_SIZE: usize = 1;

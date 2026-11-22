@@ -13,6 +13,15 @@ use crate::
     }
 ;
 
+pub mod bridge;
+pub mod error;
+pub mod header;
+pub mod status;
+
+pub use bridge::{Bridge, BridgeError, I2cSpeed, UartParity, UartStopBits};
+pub use header::{GpioChannel, I2cChannel, UartChannel};
+pub use status::Status;
+
 // Config
 
 #[derive(Clone, Debug, Default, Deserialize)]

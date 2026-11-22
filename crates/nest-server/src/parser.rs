@@ -327,6 +327,7 @@ impl FromStr for ComponentTypeSpec {
             "qemu" => ComponentTypeSpec::Qemu,
             "wasm" => ComponentTypeSpec::Wasm,
             "mux" => ComponentTypeSpec::Mux,
+            "hil" => ComponentTypeSpec::Hil,
             _ => return Err(ParserError::InvalidType("Unknown component type")),
         })
     }

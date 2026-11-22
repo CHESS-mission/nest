@@ -260,6 +260,7 @@ pub enum ComponentTypeDTO {
     Qemu,
     Wasm,
     Mux,
+    Hil,
 }
 
 #[derive(Clone, Debug)]

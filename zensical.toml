@@ -7,6 +7,10 @@ site_author = "EPFL Spacecraft Team"
 repo_url = "https://github.com/CHESS-mission/nest"
 repo_name = "CHESS-mission/nest"
 
+extra_css = [
+  "stylesheets/extra.css",
+]
+
 nav = [
   { "Home" = "index.md" },
   { "Learn" = [
@@ -35,9 +39,12 @@ nav = [
   ] },
 ]
 
-extra_css = [
-  "stylesheets/extra.css",
-]
+# Redirect Learn and Reference sections while they lack an index page
+[project.plugins.redirects]
+redirect_maps = {
+  "learn/index.md" = "learn/concepts/topology.md",
+  "reference/index.md" = "reference/topology.md",
+}
 
 [project.theme]
 language = "en"
